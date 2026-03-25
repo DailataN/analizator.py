@@ -3,6 +3,7 @@ from data.loader import load_csv_file
 from data.validator import validate_dataframe
 from data.cleaner import clean_dataframe
 from analysis.stats import calculate_selected_stats
+from analysis.visualization import create_plot
 import sys
 import io
 import pandas as pd
@@ -414,6 +415,7 @@ class AnalizatorCSV(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Błąd statystyk", f"Nie udało się policzyć statystyk:\n{e}")
             self.log(f"Błąd statystyk: {e}")
+
     def show_plot(self):
         if self.df_filtered is None or self.df_filtered.empty:
             QMessageBox.warning(self, "Brak danych", "Brak danych do wizualizacji.")
@@ -427,53 +429,19 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Brak kolumny", "Wybierz przynajmniej kolumnę X.")
             return
 
-        # przygotowanie danych
-        df = self.df_filtered
-        x = pd.to_numeric(df[col_x], errors="coerce")
-
-        y = None
-        if col_y and col_y != "(brak)":
-            y = pd.to_numeric(df[col_y], errors="coerce")
-
-        # automatyczny wybór typu wykresu
-        if chart_type == "Auto":
-            if y is not None and pd.api.types.is_numeric_dtype(x) and pd.api.types.is_numeric_dtype(y):
-                chart_type = "Wykres rozrzutu"
-            else:
-                chart_type = "Histogram"
-
-        # czyszczenie starego wykresu
         if self.canvas:
             self.canvas.setParent(None)
 
-        fig, ax = plt.subplots(figsize=(8, 5))
-        plt.style.use("seaborn-v0_8")
-
         try:
-            if chart_type == "Histogram":
-                ax.hist(x.dropna(), bins=20, color="skyblue", edgecolor="black", alpha=0.7)
-                ax.set_title(f"Histogram kolumny: {col_x}")
-                ax.set_xlabel(col_x)
-                ax.set_ylabel("Liczba wystąpień")
-
-            elif chart_type == "Wykres rozrzutu":
-                if y is None:
-                    QMessageBox.warning(self, "Brak danych Y", "Dla wykresu rozrzutu wybierz kolumnę Y.")
-                    return
-                ax.scatter(x, y, alpha=0.7, color="teal", edgecolors="black")
-                ax.set_title(f"Wykres rozrzutu: {col_x} vs {col_y}")
-                ax.set_xlabel(col_x)
-                ax.set_ylabel(col_y)
-
-            ax.grid(True, linestyle="--", alpha=0.6)
-
+            fig, final_chart_type = create_plot(self.df_filtered, col_x, col_y, chart_type)
         except Exception as e:
-            ax.text(0.5, 0.5, f"Błąd podczas rysowania: {e}", ha="center", va="center", fontsize=12)
+            QMessageBox.warning(self, "Błąd wykresu", str(e))
+            self.log(f"Błąd wykresu: {e}")
+            return
 
         self.canvas = FigureCanvas(fig)
         layout = self.tab_plot.layout()
 
-        # usuń stare widżety (np. label)
         for i in reversed(range(layout.count())):
             w = layout.itemAt(i).widget()
             if w and w is not self.btn_draw_plot and w is not self.combo_chart_type and w is not self.combo_plot_x and w is not self.combo_plot_y:
@@ -483,8 +451,10 @@ class AnalizatorCSV(QMainWindow):
         self.canvas.draw()
         self.last_fig = fig
         self.tabs.setCurrentIndex(3)
-        self.log(f"Wygenerowano wykres ({chart_type}) dla kolumny {col_x}" + (f" i {col_y}" if y is not None else ""))
-
+        self.log(
+            f"Wygenerowano wykres ({final_chart_type}) dla kolumny {col_x}"
+            + (f" i {col_y}" if col_y and col_y != '(brak)' else "")
+        )
     #EKSPORT CSV I PDF
     def export_csv(self):
         if self.df_filtered is None or self.df_filtered.empty:
