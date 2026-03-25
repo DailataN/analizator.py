@@ -58,3 +58,23 @@ def calculate_selected_stats(df_src, selected_cols, want, group_col=None):
         lines.append(summary_for_group(df_src))
 
     return "\n".join(lines)
+def compare_filter_impact(df_original, df_filtered):
+    if df_original is None or df_filtered is None:
+        raise ValueError("Brak danych do porownania")
+
+    lines = []
+    lines.append("=== ANALIZA WPLYWU FILTROW ===")
+
+    total = len(df_original)
+    filtered = len(df_filtered)
+
+    lines.append(f"Liczba rekordow przed filtrem: {total}")
+    lines.append(f"Liczba rekordow po filtrze: {filtered}")
+
+    if total > 0:
+        percent = (filtered / total) * 100
+        lines.append(f"Pozostalo: {percent:.2f}% danych")
+
+    lines.append("—" * 40)
+
+    return "\n".join(lines)

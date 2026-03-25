@@ -3,6 +3,7 @@ from data.loader import load_csv_file
 from data.validator import validate_dataframe
 from data.cleaner import clean_dataframe
 from analysis.stats import calculate_selected_stats
+from analysis.stats import compare_filter_impact
 from analysis.visualization import create_plot
 from data.loader import load_csv_file, load_excel_file
 from data.database import load_table_from_db
@@ -73,6 +74,7 @@ class AnalizatorCSV(QMainWindow):
         self.btn_filter = QPushButton("⚙️ Filtry")
         self.btn_stats = QPushButton("📊 Statystyki")
         self.btn_plot = QPushButton("📈 Wizualizacja")
+        self.btn_compare = QPushButton("📉 Analiza wpływu filtrów")
         self.btn_export_csv = QPushButton("💾 Eksport CSV")
         self.btn_export_pdf = QPushButton("🧾 Eksport PDF")
 
@@ -81,6 +83,7 @@ class AnalizatorCSV(QMainWindow):
                   self.btn_filter,
                   self.btn_stats,
                   self.btn_plot,
+                  self.btn_compare,
                   self.btn_export_csv,
                   self.btn_export_pdf]:
             b.setMinimumHeight(40)
@@ -249,6 +252,7 @@ class AnalizatorCSV(QMainWindow):
         self.btn_filter.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
         self.btn_stats.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
         self.btn_plot.clicked.connect(self.show_plot)
+        self.btn_compare.clicked.connect(self.compare_filters)
         self.btn_export_pdf.clicked.connect(self.export_pdf)
         self.btn_export_csv.clicked.connect(self.export_csv)
         self.btn_add_condition.clicked.connect(self.add_condition)
@@ -524,6 +528,19 @@ class AnalizatorCSV(QMainWindow):
             f"Wygenerowano wykres ({final_chart_type}) dla kolumny {col_x}"
             + (f" i {col_y}" if col_y and col_y != '(brak)' else "")
         )
+
+    def compare_filters(self):
+        if self.df is None or self.df_filtered is None:
+            QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj dane i zastosuj filtr.")
+            return
+
+        try:
+            result = compare_filter_impact(self.df, self.df_filtered)
+            QMessageBox.information(self, "Analiza wpływu", result)
+            self.log("Wykonano analize wplywu filtrow")
+        except Exception as e:
+            QMessageBox.warning(self, "Blad", str(e))
+            self.log(f"Blad analizy wplywu: {e}")
     #EKSPORT CSV I PDF
     def export_csv(self):
         if self.df_filtered is None or self.df_filtered.empty:
