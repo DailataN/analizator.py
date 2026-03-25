@@ -1,5 +1,7 @@
 # IMPORT BIBLIOTEK
 from data.loader import load_csv_file
+from data.validator import validate_dataframe
+from data.cleaner import clean_dataframe
 import sys
 import io
 import pandas as pd
@@ -254,6 +256,12 @@ class AnalizatorCSV(QMainWindow):
 
         try:
             self.df = load_csv_file(filename)
+
+            errors = validate_dataframe(self.df)
+            if errors:
+                QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
+
+            self.df = clean_dataframe(self.df)
             self.df_filtered = self.df.copy()
             self.update_table(self.df)
 
@@ -276,6 +284,8 @@ class AnalizatorCSV(QMainWindow):
             self.combo_groupby.addItems(self.df.columns)
 
             self.log(f"Wczytano plik: {filename} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
+            if errors:
+                self.log("Walidacja wykryła problemy: " + " | ".join(errors))
             self.tabs.setCurrentIndex(0)
 
         except Exception as e:
