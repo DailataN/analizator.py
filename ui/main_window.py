@@ -5,6 +5,7 @@ from data.cleaner import clean_dataframe
 from analysis.stats import calculate_selected_stats
 from analysis.visualization import create_plot
 from data.loader import load_csv_file, load_excel_file
+from data.database import load_table_from_db
 import sys
 import io
 import pandas as pd
@@ -18,7 +19,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTabWidget, QTextEdit, QFrame,
     QSplitter, QFileDialog, QTableWidget, QTableWidgetItem, QLineEdit, QMessageBox, QAction, QComboBox, QListWidget,
-    QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox)
+    QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox, QInputDialog)
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
@@ -35,6 +36,7 @@ class AnalizatorCSV(QMainWindow):
         self.canvas = None
         self.filters = []
         self.initUI()
+
 
     def initUI(self):
         #MENU
@@ -67,13 +69,19 @@ class AnalizatorCSV(QMainWindow):
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
         self.btn_load = QPushButton("📂 Wczytaj CSV")
+        self.btn_load_sql = QPushButton("🗄️ Wczytaj z bazy SQL")
         self.btn_filter = QPushButton("⚙️ Filtry")
         self.btn_stats = QPushButton("📊 Statystyki")
         self.btn_plot = QPushButton("📈 Wizualizacja")
         self.btn_export_csv = QPushButton("💾 Eksport CSV")
         self.btn_export_pdf = QPushButton("🧾 Eksport PDF")
 
-        for b in [self.btn_load, self.btn_filter, self.btn_stats, self.btn_plot, self.btn_export_csv,
+        for b in [self.btn_load,
+                  self.btn_load_sql,
+                  self.btn_filter,
+                  self.btn_stats,
+                  self.btn_plot,
+                  self.btn_export_csv,
                   self.btn_export_pdf]:
             b.setMinimumHeight(40)
             panel_layout.addWidget(b)
@@ -237,6 +245,7 @@ class AnalizatorCSV(QMainWindow):
 
         #POŁĄCZENIA
         self.btn_load.clicked.connect(self.load_csv)
+        self.btn_load_sql.clicked.connect(self.load_sql)
         self.btn_filter.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
         self.btn_stats.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
         self.btn_plot.clicked.connect(self.show_plot)
@@ -301,6 +310,58 @@ class AnalizatorCSV(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Błąd", str(e))
             self.log(f"Błąd przy wczytywaniu CSV: {e}")
+
+    def load_sql(self):
+        db_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Wybierz baze danych",
+            "",
+            "SQLite Files (*.db *.sqlite *.sqlite3)"
+        )
+        if not db_path:
+            return
+
+        table_name, ok = QInputDialog.getText(self, "Tabela", "Podaj nazwe tabeli:")
+        if not ok or not table_name.strip():
+            return
+
+        try:
+            self.df = load_table_from_db(db_path, table_name.strip())
+
+            errors = validate_dataframe(self.df)
+            if errors:
+                QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
+
+            self.df = clean_dataframe(self.df)
+            self.df_filtered = self.df.copy()
+            self.update_table(self.df)
+
+            self.combo_col.clear()
+            self.combo_col.addItems(self.df.columns)
+
+            self.combo_plot_x.clear()
+            self.combo_plot_y.clear()
+            self.combo_plot_x.addItems(self.df.columns)
+            self.combo_plot_y.addItems(["(brak)"] + list(self.df.columns))
+
+            self.list_cols.clear()
+            for col in self.df.columns:
+                item = QListWidgetItem(col)
+                item.setCheckState(Qt.Unchecked)
+                self.list_cols.addItem(item)
+
+            self.combo_groupby.clear()
+            self.combo_groupby.addItem("(brak)")
+            self.combo_groupby.addItems(self.df.columns)
+
+            self.log(f"Wczytano dane z bazy: {table_name} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
+            if errors:
+                self.log("Walidacja wykryla problemy: " + " | ".join(errors))
+            self.tabs.setCurrentIndex(0)
+
+        except Exception as e:
+            QMessageBox.warning(self, "Blad SQL", str(e))
+            self.log(f"Blad SQL: {e}")
 
     #TABLICA DANYCH
     def update_table(self, df):
