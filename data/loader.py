@@ -10,3 +10,7 @@ def load_csv_file(filename):
         return df
     except Exception as e:
         raise Exception(f"Nie udało się wczytać CSV: {e}")
+
+def load_excel_file(filename):
+    import pandas as pd
+    return pd.read_excel(filename)

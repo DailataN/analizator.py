@@ -4,6 +4,7 @@ from data.validator import validate_dataframe
 from data.cleaner import clean_dataframe
 from analysis.stats import calculate_selected_stats
 from analysis.visualization import create_plot
+from data.loader import load_csv_file, load_excel_file
 import sys
 import io
 import pandas as pd
@@ -252,12 +253,19 @@ class AnalizatorCSV(QMainWindow):
 
     #WCZYTYWANIE CSV
     def load_csv(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Wybierz plik CSV", "", "CSV Files (*.csv)")
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Wybierz plik",
+            "",
+            "CSV Files (*.csv);;Excel Files (*.xlsx)")
         if not filename:
             return
 
         try:
-            self.df = load_csv_file(filename)
+            if filename.endswith(".xlsx"):
+                self.df = load_excel_file(filename)
+            else:
+                self.df = load_csv_file(filename)
 
             errors = validate_dataframe(self.df)
             if errors:
