@@ -2,6 +2,7 @@
 from data.loader import load_csv_file
 from data.validator import validate_dataframe
 from data.cleaner import clean_dataframe
+from analysis.stats import calculate_selected_stats
 import sys
 import io
 import pandas as pd
@@ -382,10 +383,8 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj plik CSV.")
             return
 
-        #ZAKRES
         df_src = self.df_filtered if self.radio_scope_filtered.isChecked() and self.df_filtered is not None else self.df
 
-        #WYBRANE KOLUMNY
         selected_cols = []
         for i in range(self.list_cols.count()):
             item = self.list_cols.item(i)
@@ -396,11 +395,8 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.information(self, "Statystyki", "Zaznacz przynajmniej jedną kolumnę.")
             return
 
-        #GRUPOWANIE
         group_col = self.combo_groupby.currentText()
-        use_groupby = group_col and group_col != "(brak)"
 
-        #METRYKI
         want = {
             "count": self.chk_count.isChecked(),
             "mean": self.chk_mean.isChecked(),
@@ -408,68 +404,16 @@ class AnalizatorCSV(QMainWindow):
             "min": self.chk_min.isChecked(),
             "max": self.chk_max.isChecked(),
             "std": self.chk_std.isChecked(),
-            }
-
-       #BUDOWA RAPORTU
-        lines = []
-        lines.append(f"Źródło: {'PRZEFILTROWANE' if df_src is self.df_filtered else 'CAŁE DANE'}")
-        if use_groupby:
-            lines.append(f"Grupowanie po: {group_col}")
-        lines.append(f"Kolumny: {', '.join(selected_cols)}")
-        lines.append("Metryki: " + ", ".join([k for k, v in want.items() if v]))
-        lines.append("—"*60)
-
-        #AGREGACJA KOLUMN NUMERYCZNYCH
-        def numeric_series(s):
-            return pd.to_numeric(s, errors="coerce")
-
-        def summary_for_group(sub_df, group_name=None):
-
-            header = f"[Grupa: {group_name}]" if group_name is not None else "[Całość]"
-            out = [header]
-
-            for col in selected_cols:
-                s = sub_df[col]
-                s_num = numeric_series(s)
-                out.append(f"\nKolumna: {col}")
-
-                if want["count"]:
-                    out.append(f"  count: {s.size}")
-
-                s_clean = s_num.dropna()
-                if len(s_clean) == 0:
-                    #brak danych liczbowych
-                    if any([want["mean"], want["median"], want["min"], want["max"], want["std"]]):
-                        out.append("  (brak danych liczbowych do metryk numerycznych)")
-                else:
-                    if want["mean"]:
-                        out.append(f"  mean: {s_clean.mean():.6g}")
-                    if want["median"]:
-                        out.append(f"  median: {s_clean.median():.6g}")
-                    if want["min"]:
-                        out.append(f"  min: {s_clean.min():.6g}")
-                    if want["max"]:
-                        out.append(f"  max: {s_clean.max():.6g}")
-                    if want["std"]:
-                        out.append(f"  std: {s_clean.std():.6g}")
-
-            return "\n".join(out)
+        }
 
         try:
-            if use_groupby:
-                for gval, sub in df_src.groupby(group_col, dropna=False):
-                    lines.append(summary_for_group(sub, group_name=str(gval)))
-            else:
-                lines.append(summary_for_group(df_src))
-
-            result = "\n".join(lines)
+            result = calculate_selected_stats(df_src, selected_cols, want, group_col)
             self.stats_text.setPlainText(result)
             self.log("Obliczono statystyki na życzenie.")
             self.tabs.setCurrentIndex(2)
         except Exception as e:
             QMessageBox.warning(self, "Błąd statystyk", f"Nie udało się policzyć statystyk:\n{e}")
             self.log(f"Błąd statystyk: {e}")
-
     def show_plot(self):
         if self.df_filtered is None or self.df_filtered.empty:
             QMessageBox.warning(self, "Brak danych", "Brak danych do wizualizacji.")
