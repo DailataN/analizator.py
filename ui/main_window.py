@@ -1,26 +1,27 @@
 # IMPORT BIBLIOTEK
-from data.loader import load_csv_file
+from ui.table_model import DataFrameTableModel
+from data.loader import load_csv_file, load_excel_file
 from data.validator import validate_dataframe
 from data.cleaner import clean_dataframe
-from analysis.stats import calculate_selected_stats
-from analysis.stats import compare_filter_impact
-from analysis.visualization import create_plot
-from data.loader import load_csv_file, load_excel_file
 from data.database import load_table_from_db
-import sys
+from analysis.stats import calculate_selected_stats, compare_filter_impact
+from analysis.visualization import create_plot
+
 import io
 import pandas as pd
 import matplotlib
 
 matplotlib.use("Qt5Agg")
-import matplotlib.pyplot as plt
+
 from datetime import datetime
 
-# NARZĘDZIA GUI:
+# NARZĘDZIA GUI
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTabWidget, QTextEdit, QFrame,
-    QSplitter, QFileDialog, QTableWidget, QTableWidgetItem, QLineEdit, QMessageBox, QAction, QComboBox, QListWidget,
-    QListWidgetItem, QRadioButton, QButtonGroup, QCheckBox, QInputDialog)
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QTabWidget, QTextEdit, QFrame, QSplitter, QFileDialog, QLineEdit,
+    QMessageBox, QAction, QComboBox, QListWidget, QListWidgetItem,
+    QRadioButton, QButtonGroup, QCheckBox, QInputDialog, QTableView
+)
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
@@ -31,45 +32,51 @@ class AnalizatorCSV(QMainWindow):
         super().__init__()
         self.setWindowTitle("Analizator danych pacjentów")
         self.setGeometry(100, 100, 1280, 760)
+
         self.df = None
         self.df_filtered = None
         self.last_fig = None
         self.canvas = None
         self.filters = []
+
         self.initUI()
 
-
     def initUI(self):
-        #MENU
+        # MENU
         menubar = self.menuBar()
 
         menu_plik = menubar.addMenu("Plik")
-        action_wczytaj = QAction("Wczytaj CSV", self)
-        action_wczytaj.triggered.connect(self.load_csv)
+        action_wczytaj = QAction("Wczytaj plik", self)
+        action_wczytaj.triggered.connect(self.load_file)
         menu_plik.addAction(action_wczytaj)
         menu_plik.addSeparator()
+
         action_exit = QAction("Wyjście", self)
         action_exit.triggered.connect(self.close)
         menu_plik.addAction(action_exit)
 
         menu_eksport = menubar.addMenu("Eksport")
+
         action_pdf = QAction("Eksportuj raport PDF", self)
         action_pdf.triggered.connect(self.export_pdf)
         menu_eksport.addAction(action_pdf)
+
         action_csv = QAction("Eksportuj dane CSV", self)
         action_csv.triggered.connect(self.export_csv)
         menu_eksport.addAction(action_csv)
 
-        #CENTRALNY UKŁAD
+        # CENTRALNY UKŁAD
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
+
         splitter = QSplitter(Qt.Horizontal)
 
-        #PANEL BOCZNY
+        # PANEL BOCZNY
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
-        self.btn_load = QPushButton("📂 Wczytaj CSV")
+
+        self.btn_load = QPushButton("📂 Wczytaj plik")
         self.btn_load_sql = QPushButton("🗄️ Wczytaj z bazy SQL")
         self.btn_filter = QPushButton("⚙️ Filtry")
         self.btn_stats = QPushButton("📊 Statystyki")
@@ -78,32 +85,47 @@ class AnalizatorCSV(QMainWindow):
         self.btn_export_csv = QPushButton("💾 Eksport CSV")
         self.btn_export_pdf = QPushButton("🧾 Eksport PDF")
 
-        for b in [self.btn_load,
-                  self.btn_load_sql,
-                  self.btn_filter,
-                  self.btn_stats,
-                  self.btn_plot,
-                  self.btn_compare,
-                  self.btn_export_csv,
-                  self.btn_export_pdf]:
+        for b in [
+            self.btn_load,
+            self.btn_load_sql,
+            self.btn_filter,
+            self.btn_stats,
+            self.btn_plot,
+            self.btn_compare,
+            self.btn_export_csv,
+            self.btn_export_pdf
+        ]:
             b.setMinimumHeight(40)
             panel_layout.addWidget(b)
-        panel_layout.addStretch()
 
+        panel_layout.addStretch()
         splitter.addWidget(panel)
 
-        #ZAKŁADKI
+        # ZAKŁADKI
         self.tabs = QTabWidget()
         splitter.addWidget(self.tabs)
 
-        #PODGLĄD DANYCH
+        # PODGLĄD DANYCH
         self.tab_data = QWidget()
         vbox_data = QVBoxLayout(self.tab_data)
-        self.table = QTableWidget()
+
+        self.preview_label = QLabel("Podgląd danych: 0 z 0 rekordów")
+        vbox_data.addWidget(self.preview_label)
+
+        self.table = QTableView()
+        self.table_model = DataFrameTableModel()
+        self.table.setModel(self.table_model)
+        self.table.setSortingEnabled(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setWordWrap(False)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+
         vbox_data.addWidget(self.table)
         self.tabs.addTab(self.tab_data, "Podgląd danych")
 
-        #FILTRY
+        # FILTRY
         self.tab_filter = QWidget()
         vbox_filter = QVBoxLayout(self.tab_filter)
 
@@ -129,56 +151,60 @@ class AnalizatorCSV(QMainWindow):
 
         hbox_logic = QHBoxLayout()
         hbox_logic.addWidget(QLabel("Łącz warunki za pomocą:"))
+
         self.radio_and = QRadioButton("AND")
         self.radio_or = QRadioButton("OR")
         self.radio_and.setChecked(True)
+
         self.logic_group = QButtonGroup(self)
         self.logic_group.addButton(self.radio_and)
         self.logic_group.addButton(self.radio_or)
+
         hbox_logic.addWidget(self.radio_and)
         hbox_logic.addWidget(self.radio_or)
         vbox_filter.addLayout(hbox_logic)
 
         self.btn_apply_filters = QPushButton("Zastosuj filtry")
         self.btn_clear_filters = QPushButton("Wyczyść filtry")
+
         hbox_buttons = QHBoxLayout()
         hbox_buttons.addWidget(self.btn_apply_filters)
         hbox_buttons.addWidget(self.btn_clear_filters)
         vbox_filter.addLayout(hbox_buttons)
+
         vbox_filter.addStretch()
         self.tabs.addTab(self.tab_filter, "Filtry")
 
-        #STATYSTYKI
+        # STATYSTYKI
         self.tab_stats = QWidget()
         vbox_stats = QVBoxLayout(self.tab_stats)
 
-        #ŹRÓDŁO DANYCH
         src_box = QHBoxLayout()
         src_box.addWidget(QLabel("Zakres danych:"))
+
         self.radio_scope_filtered = QRadioButton("Przefiltrowane")
         self.radio_scope_all = QRadioButton("Całe")
         self.radio_scope_filtered.setChecked(True)
+
         self.scope_group = QButtonGroup(self)
         self.scope_group.addButton(self.radio_scope_filtered)
         self.scope_group.addButton(self.radio_scope_all)
+
         src_box.addWidget(self.radio_scope_filtered)
         src_box.addWidget(self.radio_scope_all)
         vbox_stats.addLayout(src_box)
 
-        #KOLUMNY
         vbox_stats.addWidget(QLabel("Kolumny do analizy (zaznacz co chcesz):"))
         self.list_cols = QListWidget()
         self.list_cols.setSelectionMode(QListWidget.MultiSelection)
         vbox_stats.addWidget(self.list_cols)
 
-        #GRUPOWANIE
         grp = QHBoxLayout()
         grp.addWidget(QLabel("Grupuj wg (opcjonalnie):"))
         self.combo_groupby = QComboBox()
         grp.addWidget(self.combo_groupby)
         vbox_stats.addLayout(grp)
 
-        #METRYKI - CHECKBOXY
         vbox_stats.addWidget(QLabel("Metryki:"))
         self.chk_count = QCheckBox("Liczność (count)")
         self.chk_mean = QCheckBox("Średnia (mean)")
@@ -189,26 +215,25 @@ class AnalizatorCSV(QMainWindow):
 
         for c in [self.chk_count, self.chk_mean, self.chk_median, self.chk_min, self.chk_max]:
             c.setChecked(True)
-        metrics_row1 = QHBoxLayout()
-        for c in [self.chk_count, self.chk_mean, self.chk_median, self.chk_min, self.chk_max, self.chk_std]:
-            metrics_row1.addWidget(c)
-        vbox_stats.addLayout(metrics_row1)
 
-        #URUCHOMIENIE STATYSTYKI
+        metrics_row = QHBoxLayout()
+        for c in [self.chk_count, self.chk_mean, self.chk_median, self.chk_min, self.chk_max, self.chk_std]:
+            metrics_row.addWidget(c)
+        vbox_stats.addLayout(metrics_row)
+
         self.btn_compute_stats = QPushButton("Oblicz statystyki")
         vbox_stats.addWidget(self.btn_compute_stats)
 
-        #WYNIKI STATYSTYK
         self.stats_text = QTextEdit()
         self.stats_text.setReadOnly(True)
         vbox_stats.addWidget(self.stats_text)
+
         self.tabs.addTab(self.tab_stats, "Statystyki")
 
         # WIZUALIZACJA
         self.tab_plot = QWidget()
         vbox_plot = QVBoxLayout(self.tab_plot)
 
-        # wybór kolumn do wizualizacji
         vbox_plot.addWidget(QLabel("Kolumna X:"))
         self.combo_plot_x = QComboBox()
         vbox_plot.addWidget(self.combo_plot_x)
@@ -217,41 +242,42 @@ class AnalizatorCSV(QMainWindow):
         self.combo_plot_y = QComboBox()
         vbox_plot.addWidget(self.combo_plot_y)
 
-        # wybór typu wykresu
         vbox_plot.addWidget(QLabel("Typ wykresu:"))
         self.combo_chart_type = QComboBox()
         self.combo_chart_type.addItems(["Auto", "Histogram", "Wykres rozrzutu"])
         vbox_plot.addWidget(self.combo_chart_type)
 
-        # przycisk rysowania
         self.btn_draw_plot = QPushButton("Rysuj wykres")
         vbox_plot.addWidget(self.btn_draw_plot)
 
-        # miejsce na wykres
-        self.plot_label = QLabel("Brak danych do wizualizacji.")
-        vbox_plot.addWidget(self.plot_label)
+        self.plot_info_label = QLabel("Brak danych do wizualizacji.")
+        vbox_plot.addWidget(self.plot_info_label)
+
+        self.plot_container = QWidget()
+        self.plot_container_layout = QVBoxLayout(self.plot_container)
+        self.plot_container_layout.setContentsMargins(0, 0, 0, 0)
+        vbox_plot.addWidget(self.plot_container)
 
         self.tabs.addTab(self.tab_plot, "Wizualizacja")
 
-        # Połączenie
-        self.btn_draw_plot.clicked.connect(self.show_plot)
-
-        #LOGI
+        # LOGI
         logs_frame = QFrame()
         logs_layout = QVBoxLayout(logs_frame)
         logs_layout.addWidget(QLabel("Logi:"))
+
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
         logs_layout.addWidget(self.logs)
+
         main_layout.addWidget(splitter)
         main_layout.addWidget(logs_frame)
 
-        #POŁĄCZENIA
-        self.btn_load.clicked.connect(self.load_csv)
+        # POŁĄCZENIA
+        self.btn_load.clicked.connect(self.load_file)
         self.btn_load_sql.clicked.connect(self.load_sql)
         self.btn_filter.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
         self.btn_stats.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
-        self.btn_plot.clicked.connect(self.show_plot)
+        self.btn_plot.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
         self.btn_compare.clicked.connect(self.compare_filters)
         self.btn_export_pdf.clicked.connect(self.export_pdf)
         self.btn_export_csv.clicked.connect(self.export_csv)
@@ -259,23 +285,72 @@ class AnalizatorCSV(QMainWindow):
         self.btn_clear_filters.clicked.connect(self.clear_filters)
         self.btn_apply_filters.clicked.connect(self.apply_filters)
         self.btn_compute_stats.clicked.connect(self.compute_selected_stats)
+        self.btn_draw_plot.clicked.connect(self.show_plot)
 
-    #LOG
+    # LOG
     def log(self, msg):
         self.logs.append(f"> {msg}")
 
-    #WCZYTYWANIE CSV
-    def load_csv(self):
+    def _parse_numeric_value(self, value_text):
+        return float(value_text.replace(",", "."))
+
+    def _clear_plot_area(self):
+        while self.plot_container_layout.count():
+            item = self.plot_container_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+        self.canvas = None
+
+    def _refresh_ui_after_load(self):
+        if self.df is None or self.df.empty:
+            return
+
+        self.df_filtered = self.df.copy()
+        self.update_table(self.df)
+
+        self.combo_col.clear()
+        self.combo_col.addItems([str(col) for col in self.df.columns])
+
+        self.combo_plot_x.clear()
+        self.combo_plot_y.clear()
+        self.combo_plot_x.addItems([str(col) for col in self.df.columns])
+        self.combo_plot_y.addItems(["(brak)"] + [str(col) for col in self.df.columns])
+
+        self.list_cols.clear()
+        for col in self.df.columns:
+            item = QListWidgetItem(str(col))
+            item.setCheckState(Qt.Unchecked)
+            self.list_cols.addItem(item)
+
+        self.combo_groupby.clear()
+        self.combo_groupby.addItem("(brak)")
+        self.combo_groupby.addItems([str(col) for col in self.df.columns])
+
+        self.filters.clear()
+        self.list_filters.clear()
+        self.input_value.clear()
+        self.radio_and.setChecked(True)
+
+        self.stats_text.clear()
+        self._clear_plot_area()
+        self.plot_info_label.setText("Brak danych do wizualizacji.")
+        self.last_fig = None
+
+    # WCZYTYWANIE PLIKU
+    def load_file(self):
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Wybierz plik",
             "",
-            "CSV Files (*.csv);;Excel Files (*.xlsx)")
+            "CSV Files (*.csv);;Excel Files (*.xlsx)"
+        )
         if not filename:
             return
 
         try:
-            if filename.endswith(".xlsx"):
+            if filename.lower().endswith(".xlsx"):
                 self.df = load_excel_file(filename)
             else:
                 self.df = load_csv_file(filename)
@@ -285,47 +360,29 @@ class AnalizatorCSV(QMainWindow):
                 QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
 
             self.df = clean_dataframe(self.df)
-            self.df_filtered = self.df.copy()
-            self.update_table(self.df)
-
-            self.combo_col.clear()
-            self.combo_col.addItems(self.df.columns)
-
-            self.combo_plot_x.clear()
-            self.combo_plot_y.clear()
-            self.combo_plot_x.addItems(self.df.columns)
-            self.combo_plot_y.addItems(["(brak)"] + list(self.df.columns))
-
-            self.list_cols.clear()
-            for col in self.df.columns:
-                item = QListWidgetItem(col)
-                item.setCheckState(Qt.Unchecked)
-                self.list_cols.addItem(item)
-
-            self.combo_groupby.clear()
-            self.combo_groupby.addItem("(brak)")
-            self.combo_groupby.addItems(self.df.columns)
+            self._refresh_ui_after_load()
 
             self.log(f"Wczytano plik: {filename} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
             if errors:
                 self.log("Walidacja wykryła problemy: " + " | ".join(errors))
+
             self.tabs.setCurrentIndex(0)
 
         except Exception as e:
             QMessageBox.warning(self, "Błąd", str(e))
-            self.log(f"Błąd przy wczytywaniu CSV: {e}")
+            self.log(f"Błąd przy wczytywaniu pliku: {e}")
 
     def load_sql(self):
         db_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Wybierz baze danych",
+            "Wybierz bazę danych",
             "",
             "SQLite Files (*.db *.sqlite *.sqlite3)"
         )
         if not db_path:
             return
 
-        table_name, ok = QInputDialog.getText(self, "Tabela", "Podaj nazwe tabeli:")
+        table_name, ok = QInputDialog.getText(self, "Tabela", "Podaj nazwę tabeli:")
         if not ok or not table_name.strip():
             return
 
@@ -337,59 +394,46 @@ class AnalizatorCSV(QMainWindow):
                 QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
 
             self.df = clean_dataframe(self.df)
-            self.df_filtered = self.df.copy()
-            self.update_table(self.df)
-
-            self.combo_col.clear()
-            self.combo_col.addItems(self.df.columns)
-
-            self.combo_plot_x.clear()
-            self.combo_plot_y.clear()
-            self.combo_plot_x.addItems(self.df.columns)
-            self.combo_plot_y.addItems(["(brak)"] + list(self.df.columns))
-
-            self.list_cols.clear()
-            for col in self.df.columns:
-                item = QListWidgetItem(col)
-                item.setCheckState(Qt.Unchecked)
-                self.list_cols.addItem(item)
-
-            self.combo_groupby.clear()
-            self.combo_groupby.addItem("(brak)")
-            self.combo_groupby.addItems(self.df.columns)
+            self._refresh_ui_after_load()
 
             self.log(f"Wczytano dane z bazy: {table_name} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
             if errors:
-                self.log("Walidacja wykryla problemy: " + " | ".join(errors))
+                self.log("Walidacja wykryła problemy: " + " | ".join(errors))
+
             self.tabs.setCurrentIndex(0)
 
         except Exception as e:
-            QMessageBox.warning(self, "Blad SQL", str(e))
-            self.log(f"Blad SQL: {e}")
+            QMessageBox.warning(self, "Błąd SQL", str(e))
+            self.log(f"Błąd SQL: {e}")
 
-    #TABLICA DANYCH
+    # TABLICA DANYCH
     def update_table(self, df):
-        self.table.clear()
         if df is None or df.empty:
-            self.table.setRowCount(0)
-            self.table.setColumnCount(0)
-            return
-        self.table.setRowCount(len(df))
-        self.table.setColumnCount(len(df.columns))
-        self.table.setHorizontalHeaderLabels(df.columns)
-        for i in range(len(df)):
-            for j in range(len(df.columns)):
-                self.table.setItem(i, j, QTableWidgetItem(str(df.iat[i, j])))
-        self.table.resizeColumnsToContents()
+            self.table.setUpdatesEnabled(False)
+            self.table_model.set_dataframe(None)
+            self.table.setUpdatesEnabled(True)
 
-    #FILTRY
+            self.preview_label.setText("Podgląd danych: 0 z 0 rekordów")
+            self.log("Brak danych do wyświetlenia")
+            return
+
+        self.table.setUpdatesEnabled(False)
+        self.table_model.set_dataframe(df)
+        self.table.setUpdatesEnabled(True)
+
+        self.preview_label.setText(f"Podgląd danych: {len(df)} rekordów")
+        self.log(f"Załadowano do widoku: {len(df)} wierszy")
+
+    # FILTRY
     def add_condition(self):
         col = self.combo_col.currentText()
         op = self.combo_op.currentText()
         val = self.input_value.text().strip()
+
         if not col or not val:
             QMessageBox.information(self, "Brak danych", "Wybierz kolumnę i wprowadź wartość.")
             return
+
         condition = (col, op, val)
         self.filters.append(condition)
         self.list_filters.addItem(f"{col} {op} {val}")
@@ -399,13 +443,21 @@ class AnalizatorCSV(QMainWindow):
     def clear_filters(self):
         self.filters.clear()
         self.list_filters.clear()
+        self.input_value.clear()
+        self.radio_and.setChecked(True)
+
         if self.df is not None:
             self.df_filtered = self.df.copy()
             self.update_table(self.df)
+
         self.log("Wyczyszczono wszystkie filtry.")
 
     def apply_filters(self):
-        if self.df is None or not self.filters:
+        if self.df is None:
+            QMessageBox.information(self, "Filtry", "Najpierw wczytaj dane.")
+            return
+
+        if not self.filters:
             QMessageBox.information(self, "Filtry", "Nie dodano żadnych warunków.")
             return
 
@@ -414,32 +466,47 @@ class AnalizatorCSV(QMainWindow):
 
         for col, op, val in self.filters:
             series_str = self.df[col].astype(str)
-            series_num = pd.to_numeric(self.df[col], errors="coerce")
+            series_num = pd.to_numeric(
+                self.df[col].astype(str).str.replace(",", ".", regex=False),
+                errors="coerce"
+            )
 
             try:
                 if op == "=":
                     mask = series_str.str.lower() == val.lower()
                     try:
-                        vnum = float(val)
+                        vnum = self._parse_numeric_value(val)
                         mask = mask | (series_num == vnum)
                     except Exception:
                         pass
+
                 elif op == ">":
-                    mask = series_num > float(val)
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num > vnum
+
                 elif op == "<":
-                    mask = series_num < float(val)
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num < vnum
+
                 elif op == ">=":
-                    mask = series_num >= float(val)
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num >= vnum
+
                 elif op == "<=":
-                    mask = series_num <= float(val)
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num <= vnum
+
                 elif op == "zawiera":
                     mask = series_str.str.contains(val, case=False, na=False)
+
                 elif op == "nie zawiera":
                     mask = ~series_str.str.contains(val, case=False, na=False)
+
                 else:
-                    mask = pd.Series([True] * len(self.df))
+                    mask = pd.Series([True] * len(self.df), index=self.df.index)
+
             except Exception:
-                mask = pd.Series([False] * len(self.df))
+                mask = pd.Series([False] * len(self.df), index=self.df.index)
 
             masks.append(mask.fillna(False))
 
@@ -447,14 +514,16 @@ class AnalizatorCSV(QMainWindow):
         for m in masks[1:]:
             final_mask = (final_mask & m) if logic == "and" else (final_mask | m)
 
-        self.df_filtered = self.df[final_mask]
+        self.df_filtered = self.df.loc[final_mask].copy()
         self.update_table(self.df_filtered)
         self.tabs.setCurrentIndex(0)
+
         self.log(f"Zastosowano {len(self.filters)} filtrów ({logic.upper()}); wyników: {len(self.df_filtered)}")
 
+    # STATYSTYKI
     def compute_selected_stats(self):
         if self.df is None:
-            QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj plik CSV.")
+            QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj plik.")
             return
 
         df_src = self.df_filtered if self.radio_scope_filtered.isChecked() and self.df_filtered is not None else self.df
@@ -483,12 +552,14 @@ class AnalizatorCSV(QMainWindow):
         try:
             result = calculate_selected_stats(df_src, selected_cols, want, group_col)
             self.stats_text.setPlainText(result)
-            self.log("Obliczono statystyki na życzenie.")
+            self.log("Obliczono statystyki.")
             self.tabs.setCurrentIndex(2)
+
         except Exception as e:
             QMessageBox.warning(self, "Błąd statystyk", f"Nie udało się policzyć statystyk:\n{e}")
             self.log(f"Błąd statystyk: {e}")
 
+    # WYKRES
     def show_plot(self):
         if self.df_filtered is None or self.df_filtered.empty:
             QMessageBox.warning(self, "Brak danych", "Brak danych do wizualizacji.")
@@ -502,9 +573,6 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Brak kolumny", "Wybierz przynajmniej kolumnę X.")
             return
 
-        if self.canvas:
-            self.canvas.setParent(None)
-
         try:
             fig, final_chart_type = create_plot(self.df_filtered, col_x, col_y, chart_type)
         except Exception as e:
@@ -512,39 +580,43 @@ class AnalizatorCSV(QMainWindow):
             self.log(f"Błąd wykresu: {e}")
             return
 
+        self._clear_plot_area()
+
         self.canvas = FigureCanvas(fig)
-        layout = self.tab_plot.layout()
-
-        for i in reversed(range(layout.count())):
-            w = layout.itemAt(i).widget()
-            if w and w is not self.btn_draw_plot and w is not self.combo_chart_type and w is not self.combo_plot_x and w is not self.combo_plot_y:
-                w.setParent(None)
-
-        layout.addWidget(self.canvas)
+        self.plot_container_layout.addWidget(self.canvas)
         self.canvas.draw()
+
         self.last_fig = fig
+        self.plot_info_label.setText("")
+
         self.tabs.setCurrentIndex(3)
         self.log(
             f"Wygenerowano wykres ({final_chart_type}) dla kolumny {col_x}"
-            + (f" i {col_y}" if col_y and col_y != '(brak)' else "")
+            + (f" i {col_y}" if col_y and col_y != "(brak)" else "")
         )
 
+    # ANALIZA WPŁYWU FILTRÓW
     def compare_filters(self):
         if self.df is None or self.df_filtered is None:
-            QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj dane i zastosuj filtr.")
+            QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj dane.")
+            return
+
+        if not self.filters:
+            QMessageBox.information(self, "Brak filtrów", "Najpierw dodaj i zastosuj filtry.")
             return
 
         try:
             result = compare_filter_impact(self.df, self.df_filtered)
             QMessageBox.information(self, "Analiza wpływu", result)
-            self.log("Wykonano analize wplywu filtrow")
+            self.log("Wykonano analizę wpływu filtrów.")
         except Exception as e:
-            QMessageBox.warning(self, "Blad", str(e))
-            self.log(f"Blad analizy wplywu: {e}")
-    #EKSPORT CSV I PDF
+            QMessageBox.warning(self, "Błąd", str(e))
+            self.log(f"Błąd analizy wpływu: {e}")
+
+    # EKSPORT CSV
     def export_csv(self):
         if self.df_filtered is None or self.df_filtered.empty:
-            QMessageBox.warning(self, "Brak danych", "Brak danych do eksportu!")
+            QMessageBox.warning(self, "Brak danych", "Brak danych do eksportu.")
             return
 
         filename, _ = QFileDialog.getSaveFileName(
@@ -566,9 +638,11 @@ class AnalizatorCSV(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Błąd CSV", f"Nie udało się zapisać pliku CSV:\n{e}")
             self.log(f"Błąd eksportu CSV: {e}")
+
+    # EKSPORT PDF
     def export_pdf(self):
         if self.df_filtered is None or self.df_filtered.empty:
-            QMessageBox.warning(self, "Brak danych", "Brak danych do eksportu!")
+            QMessageBox.warning(self, "Brak danych", "Brak danych do eksportu.")
             return
 
         try:
@@ -577,20 +651,25 @@ class AnalizatorCSV(QMainWindow):
             from reportlab.lib.utils import ImageReader
         except Exception as e:
             QMessageBox.warning(
-                self, "Brak biblioteki",
-                "Do eksportu PDF potrzebny jest pakiet 'reportlab'.\n"
-                "Zainstaluj:  pip install reportlab"
+                self,
+                "Brak biblioteki",
+                "Do eksportu PDF potrzebny jest pakiet 'reportlab'.\nZainstaluj: pip install reportlab"
             )
             self.log(f"Brak reportlab: {e}")
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"raport_{timestamp}.pdf"
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
-        filename, _ = QFileDialog.getSaveFileName(self, "Zapisz raport PDF", default_name, "PDF Files (*.pdf)", options=options)
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Zapisz raport PDF",
+            default_name,
+            "PDF Files (*.pdf)"
+        )
         if not filename:
             return
+
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
 
@@ -598,13 +677,13 @@ class AnalizatorCSV(QMainWindow):
             c = rl_canvas.Canvas(filename, pagesize=A4)
             width, height = A4
 
-            #NAGŁÓWEK
+            # NAGŁÓWEK
             c.setFont("Helvetica-Bold", 16)
             c.drawString(50, height - 50, "Raport analizy danych CSV")
             c.setFont("Helvetica", 10)
-            c.drawString(50, height - 70, "Wygenerowano przez Analizator CSV 3.2")
+            c.drawString(50, height - 70, "Wygenerowano przez Analizator danych pacjentów")
 
-            #STATYSTYKI
+            # STATYSTYKI
             stats_text = self.stats_text.toPlainText()
             if not stats_text and self.df_filtered is not None:
                 try:
@@ -615,6 +694,7 @@ class AnalizatorCSV(QMainWindow):
 
             c.setFont("Helvetica", 11)
             text_obj = c.beginText(50, height - 110)
+
             for line in stats_text.splitlines():
                 if text_obj.getY() < 120:
                     c.drawText(text_obj)
@@ -622,24 +702,28 @@ class AnalizatorCSV(QMainWindow):
                     c.setFont("Helvetica", 11)
                     text_obj = c.beginText(50, height - 50)
                 text_obj.textLine(line)
+
             c.drawText(text_obj)
 
-            #WYKRES
+            # WYKRES
             if self.last_fig:
                 buf = io.BytesIO()
                 self.last_fig.savefig(buf, format="png", bbox_inches="tight")
                 buf.seek(0)
+
                 img = ImageReader(buf)
                 c.showPage()
                 c.setFont("Helvetica-Bold", 14)
                 c.drawString(50, height - 50, "Wykres")
                 c.drawImage(img, 50, 150, width - 100, height - 250, preserveAspectRatio=True)
+
                 buf.close()
 
-            c.showPage()
             c.save()
+
             self.log(f"Zapisano raport: {filename}")
             QMessageBox.information(self, "Sukces", f"Raport zapisano jako:\n{filename}")
+
         except Exception as e:
             QMessageBox.warning(self, "Błąd PDF", f"Nie udało się zapisać raportu:\n{e}")
-
+            self.log(f"Błąd eksportu PDF: {e}")

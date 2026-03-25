@@ -4,11 +4,22 @@ import pandas as pd
 def clean_dataframe(df):
     df = df.copy()
 
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].astype(str).str.strip()
+    # tylko kolumny tekstowe
+    obj_cols = df.select_dtypes(include=["object"]).columns
 
-            # zamiana przecinka dziesiętnego na kropkę tylko w tekstach liczbowych
-            df[col] = df[col].str.replace(",", ".", regex=False)
+    for col in obj_cols:
+        series = df[col]
+
+        # szybkie sprawdzenie czy warto coś robić
+        needs_strip = series.str.contains(r"^\s+|\s+$", regex=True, na=False).any()
+        needs_replace = series.str.contains(",", na=False).any()
+
+        if needs_strip:
+            series = series.str.strip()
+
+        if needs_replace:
+            series = series.str.replace(",", ".", regex=False)
+
+        df[col] = series
 
     return df
