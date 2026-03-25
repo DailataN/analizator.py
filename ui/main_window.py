@@ -1,4 +1,5 @@
 # IMPORT BIBLIOTEK
+from data.loader import load_csv_file
 import sys
 import io
 import pandas as pd
@@ -250,18 +251,15 @@ class AnalizatorCSV(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(self, "Wybierz plik CSV", "", "CSV Files (*.csv)")
         if not filename:
             return
-        try:
-            try:
-                self.df = pd.read_csv(filename, sep=None, engine="python", on_bad_lines="skip")
-            except Exception:
-                self.df = pd.read_csv(filename, sep=";", engine="python", on_bad_lines="skip")
 
+        try:
+            self.df = load_csv_file(filename)
             self.df_filtered = self.df.copy()
             self.update_table(self.df)
 
-            #UZUPEŁNIANIE LISTY KOLUMN
             self.combo_col.clear()
             self.combo_col.addItems(self.df.columns)
+
             self.combo_plot_x.clear()
             self.combo_plot_y.clear()
             self.combo_plot_x.addItems(self.df.columns)
@@ -279,8 +277,9 @@ class AnalizatorCSV(QMainWindow):
 
             self.log(f"Wczytano plik: {filename} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
             self.tabs.setCurrentIndex(0)
+
         except Exception as e:
-            QMessageBox.warning(self, "Błąd", f"Nie udało się wczytać CSV:\n{e}")
+            QMessageBox.warning(self, "Błąd", str(e))
             self.log(f"Błąd przy wczytywaniu CSV: {e}")
 
     #TABLICA DANYCH
