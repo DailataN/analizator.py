@@ -12,16 +12,17 @@ def load_csv_file(filename):
                     sep=sep,
                     engine="c",
                     encoding=enc,
-                    low_memory=False
+                    low_memory=False,
+                    parse_dates=True,
+                    infer_datetime_format=True
                 )
-                # Sprawdź czy separator faktycznie zadziałał –
-                # jeśli jest tylko 1 kolumna, próbuj dalej
+
                 if len(df.columns) > 1:
                     return df
             except Exception:
                 continue
 
-    # Fallback – pozwól pandas samemu wykryć separator
+
     try:
         df = pd.read_csv(
             filename,
