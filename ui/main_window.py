@@ -20,10 +20,47 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTabWidget, QTextEdit, QFrame, QSplitter, QFileDialog, QLineEdit,
     QMessageBox, QAction, QComboBox, QListWidget, QListWidgetItem,
-    QRadioButton, QButtonGroup, QCheckBox, QInputDialog, QTableView, QDialog
+    QRadioButton, QButtonGroup, QCheckBox, QInputDialog, QTableView, QDialog,
+    QApplication
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
+
+# WĄTEK DO WCZYTYWANIA PLIKÓW
+class FileLoaderThread(QThread):
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(str)
+
+    def __init__(self, filename=None, db_path=None, table_name=None):
+        super().__init__()
+        self.filename = filename
+        self.db_path = db_path
+        self.table_name = table_name
+
+    def run(self):
+        try:
+            if self.db_path:
+                self.progress.emit(f"Wczytywanie tabeli '{self.table_name}' z bazy...")
+                df = load_table_from_db(self.db_path, self.table_name)
+            elif self.filename.lower().endswith(".xlsx"):
+                self.progress.emit("Wczytywanie pliku Excel...")
+                df = load_excel_file(self.filename)
+            else:
+                self.progress.emit("Wczytywanie pliku CSV...")
+                df = load_csv_file(self.filename)
+
+            self.progress.emit("Walidacja danych...")
+            errors = validate_dataframe(df)
+
+            self.progress.emit("Czyszczenie danych...")
+            df = clean_dataframe(df)
+
+            self.finished.emit((df, errors))
+
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 # GŁÓWNE OKNO APLIKACJI
@@ -38,6 +75,7 @@ class AnalizatorCSV(QMainWindow):
         self.last_fig = None
         self.canvas = None
         self.filters = []
+        self.loader_thread = None
 
         self.initUI()
 
@@ -141,12 +179,10 @@ class AnalizatorCSV(QMainWindow):
         self.filter_value_label = QLabel("Wartość:")
         vbox_filter.addWidget(self.filter_value_label)
 
-        # Pole tekstowe dla liczb
         self.input_value = QLineEdit()
         self.input_value.setPlaceholderText("np. 50 lub 5,5")
         vbox_filter.addWidget(self.input_value)
 
-        # Lista rozwijana dla tekstu (domyślnie ukryta)
         self.combo_value = QComboBox()
         self.combo_value.setVisible(False)
         vbox_filter.addWidget(self.combo_value)
@@ -276,7 +312,6 @@ class AnalizatorCSV(QMainWindow):
         btn_row.addWidget(self.btn_fullscreen)
         vbox_plot.addLayout(btn_row)
 
-        # Zakres osi Y
         self.chk_yrange = QCheckBox("Ustaw zakres osi Y ręcznie")
         vbox_plot.addWidget(self.chk_yrange)
 
@@ -394,42 +429,16 @@ class AnalizatorCSV(QMainWindow):
     # WCZYTYWANIE PLIKU
     def load_file(self):
         filename, _ = QFileDialog.getOpenFileName(
-            self,
-            "Wybierz plik",
-            "",
+            self, "Wybierz plik", "",
             "CSV Files (*.csv);;Excel Files (*.xlsx)"
         )
         if not filename:
             return
-
-        try:
-            if filename.lower().endswith(".xlsx"):
-                self.df = load_excel_file(filename)
-            else:
-                self.df = load_csv_file(filename)
-
-            errors = validate_dataframe(self.df)
-            if errors:
-                QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
-
-            self.df = clean_dataframe(self.df)
-            self._refresh_ui_after_load()
-
-            self.log(f"Wczytano plik: {filename} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
-            if errors:
-                self.log("Walidacja wykryła problemy: " + " | ".join(errors))
-
-            self.tabs.setCurrentIndex(0)
-
-        except Exception as e:
-            QMessageBox.warning(self, "Błąd", str(e))
-            self.log(f"Błąd przy wczytywaniu pliku: {e}")
+        self._start_loader(filename=filename)
 
     def load_sql(self):
         db_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Wybierz bazę danych",
-            "",
+            self, "Wybierz bazę danych", "",
             "SQLite Files (*.db *.sqlite *.sqlite3)"
         )
         if not db_path:
@@ -439,25 +448,48 @@ class AnalizatorCSV(QMainWindow):
         if not ok or not table_name.strip():
             return
 
-        try:
-            self.df = load_table_from_db(db_path, table_name.strip())
+        self._start_loader(db_path=db_path, table_name=table_name.strip())
 
-            errors = validate_dataframe(self.df)
-            if errors:
-                QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
+    def _start_loader(self, filename=None, db_path=None, table_name=None):
+        self.btn_load.setEnabled(False)
+        self.btn_load_sql.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            self.df = clean_dataframe(self.df)
-            self._refresh_ui_after_load()
+        self.loader_thread = FileLoaderThread(
+            filename=filename,
+            db_path=db_path,
+            table_name=table_name
+        )
+        self.loader_thread.progress.connect(self.log)
+        self.loader_thread.finished.connect(self._on_load_finished)
+        self.loader_thread.error.connect(self._on_load_error)
+        self.loader_thread.start()
 
-            self.log(f"Wczytano dane z bazy: {table_name} ({len(self.df)} wierszy, {len(self.df.columns)} kolumn)")
-            if errors:
-                self.log("Walidacja wykryła problemy: " + " | ".join(errors))
+    def _on_load_finished(self, result):
+        QApplication.restoreOverrideCursor()
+        self.btn_load.setEnabled(True)
+        self.btn_load_sql.setEnabled(True)
 
-            self.tabs.setCurrentIndex(0)
+        df, errors = result
+        self.df = df
 
-        except Exception as e:
-            QMessageBox.warning(self, "Błąd SQL", str(e))
-            self.log(f"Błąd SQL: {e}")
+        if errors:
+            QMessageBox.warning(self, "Walidacja danych", "\n".join(errors))
+
+        self._refresh_ui_after_load()
+
+        self.log(f"Wczytano dane: {len(self.df)} wierszy, {len(self.df.columns)} kolumn")
+        if errors:
+            self.log("Walidacja wykryła problemy: " + " | ".join(errors))
+
+        self.tabs.setCurrentIndex(0)
+
+    def _on_load_error(self, error_msg):
+        QApplication.restoreOverrideCursor()
+        self.btn_load.setEnabled(True)
+        self.btn_load_sql.setEnabled(True)
+        QMessageBox.warning(self, "Błąd wczytywania", error_msg)
+        self.log(f"Błąd wczytywania: {error_msg}")
 
     # TABLICA DANYCH
     def update_table(self, df):
@@ -465,7 +497,6 @@ class AnalizatorCSV(QMainWindow):
             self.table.setUpdatesEnabled(False)
             self.table_model.set_dataframe(None)
             self.table.setUpdatesEnabled(True)
-
             self.preview_label.setText("Podgląd danych: 0 z 0 rekordów")
             self.log("Brak danych do wyświetlenia")
             return
@@ -473,7 +504,6 @@ class AnalizatorCSV(QMainWindow):
         self.table.setUpdatesEnabled(False)
         self.table_model.set_dataframe(df)
         self.table.setUpdatesEnabled(True)
-
         self.preview_label.setText(f"Podgląd danych: {len(df)} rekordów")
         self.log(f"Załadowano do widoku: {len(df)} wierszy")
 
@@ -486,17 +516,13 @@ class AnalizatorCSV(QMainWindow):
                      pd.to_numeric(series, errors="coerce").notna().mean() > 0.5
 
         if is_numeric:
-            # Kolumna numeryczna — pole tekstowe
             self.input_value.setVisible(True)
             self.combo_value.setVisible(False)
             self.filter_value_label.setText("Wartość:")
             self.input_value.setPlaceholderText("np. 50 lub 5,5")
         else:
-            # Kolumna tekstowa — lista rozwijana
             all_unique = series.dropna().astype(str).unique()
             n_total = len(all_unique)
-
-            # Ogranicz do 500 wartości żeby nie blokować GUI
             MAX_VALUES = 500
             if n_total > MAX_VALUES:
                 unique_vals = sorted(all_unique[:MAX_VALUES])
@@ -506,7 +532,7 @@ class AnalizatorCSV(QMainWindow):
                 label = f"Wartość ({n_total} unikalnych):"
 
             self.combo_value.clear()
-            self.combo_value.blockSignals(True)  # blokuj sygnały podczas wypełniania
+            self.combo_value.blockSignals(True)
             self.combo_value.addItems(unique_vals)
             self.combo_value.blockSignals(False)
             self.combo_value.setVisible(True)
@@ -518,7 +544,6 @@ class AnalizatorCSV(QMainWindow):
         col = self.combo_col.currentText()
         op = self.combo_op.currentText()
 
-        # Pobierz wartość z właściwego widgetu
         if self.combo_value.isVisible():
             val = self.combo_value.currentText().strip()
         else:
@@ -528,7 +553,6 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.information(self, "Brak danych", "Wybierz kolumnę i wprowadź wartość.")
             return
 
-        # Walidacja dla operatorów numerycznych
         if op in [">", "<", ">=", "<="]:
             try:
                 self._parse_numeric_value(val)
@@ -581,11 +605,12 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.information(self, "Filtry", "Nie dodano żadnych warunków.")
             return
 
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         logic = "and" if self.radio_and.isChecked() else "or"
         masks = []
         errors = []
 
-        # Przelicz konwersje kolumn raz — cache dla wydajności
         col_cache = {}
         for col, op, val in self.filters:
             if col not in col_cache:
@@ -598,7 +623,6 @@ class AnalizatorCSV(QMainWindow):
 
         for col, op, val in self.filters:
             series_str, series_num = col_cache[col]
-
             try:
                 if op == "=":
                     mask = series_str.str.lower() == val.lower()
@@ -639,7 +663,6 @@ class AnalizatorCSV(QMainWindow):
                 errors.append(f"Warunek '{col} {op} {val}': {e}")
                 masks.append(pd.Series([False] * len(self.df), index=self.df.index))
 
-        # Pokaż błędy jeśli wystąpiły
         if errors:
             QMessageBox.warning(
                 self, "Błędy filtrowania",
@@ -651,93 +674,15 @@ class AnalizatorCSV(QMainWindow):
             final_mask = (final_mask & m) if logic == "and" else (final_mask | m)
 
         self.df_filtered = self.df.loc[final_mask].copy()
+
+        QApplication.restoreOverrideCursor()
+
         self.update_table(self.df_filtered)
         self.tabs.setCurrentIndex(0)
-
         self.log(
             f"Zastosowano {len(self.filters)} filtrów ({logic.upper()}); "
             f"wyników: {len(self.df_filtered)} z {len(self.df)}"
         )
-
-    def clear_filters(self):
-        self.filters.clear()
-        self.list_filters.clear()
-        self.input_value.clear()
-        self.radio_and.setChecked(True)
-
-        if self.df is not None:
-            self.df_filtered = self.df.copy()
-            self.update_table(self.df)
-
-        self.log("Wyczyszczono wszystkie filtry.")
-
-    def apply_filters(self):
-        if self.df is None:
-            QMessageBox.information(self, "Filtry", "Najpierw wczytaj dane.")
-            return
-
-        if not self.filters:
-            QMessageBox.information(self, "Filtry", "Nie dodano żadnych warunków.")
-            return
-
-        logic = "and" if self.radio_and.isChecked() else "or"
-        masks = []
-
-        for col, op, val in self.filters:
-            series_str = self.df[col].astype(str)
-            series_num = pd.to_numeric(
-                self.df[col].astype(str).str.replace(",", ".", regex=False),
-                errors="coerce"
-            )
-
-            try:
-                if op == "=":
-                    mask = series_str.str.lower() == val.lower()
-                    try:
-                        vnum = self._parse_numeric_value(val)
-                        mask = mask | (series_num == vnum)
-                    except Exception:
-                        pass
-
-                elif op == ">":
-                    vnum = self._parse_numeric_value(val)
-                    mask = series_num > vnum
-
-                elif op == "<":
-                    vnum = self._parse_numeric_value(val)
-                    mask = series_num < vnum
-
-                elif op == ">=":
-                    vnum = self._parse_numeric_value(val)
-                    mask = series_num >= vnum
-
-                elif op == "<=":
-                    vnum = self._parse_numeric_value(val)
-                    mask = series_num <= vnum
-
-                elif op == "zawiera":
-                    mask = series_str.str.contains(val, case=False, na=False)
-
-                elif op == "nie zawiera":
-                    mask = ~series_str.str.contains(val, case=False, na=False)
-
-                else:
-                    mask = pd.Series([True] * len(self.df), index=self.df.index)
-
-            except Exception:
-                mask = pd.Series([False] * len(self.df), index=self.df.index)
-
-            masks.append(mask.fillna(False))
-
-        final_mask = masks[0]
-        for m in masks[1:]:
-            final_mask = (final_mask & m) if logic == "and" else (final_mask | m)
-
-        self.df_filtered = self.df.loc[final_mask].copy()
-        self.update_table(self.df_filtered)
-        self.tabs.setCurrentIndex(0)
-
-        self.log(f"Zastosowano {len(self.filters)} filtrów ({logic.upper()}); wyników: {len(self.df_filtered)}")
 
     # STATYSTYKI
     def compute_selected_stats(self):
@@ -795,7 +740,6 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Brak kolumny", "Wybierz przynajmniej kolumnę X.")
             return
 
-        # Odczytaj zakres osi Y jeśli ustawiony
         y_min = None
         y_max = None
         if self.chk_yrange.isChecked():
@@ -887,10 +831,7 @@ class AnalizatorCSV(QMainWindow):
             return
 
         filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Zapisz dane CSV",
-            "wynik.csv",
-            "CSV Files (*.csv)"
+            self, "Zapisz dane CSV", "wynik.csv", "CSV Files (*.csv)"
         )
         if not filename:
             return
@@ -918,8 +859,7 @@ class AnalizatorCSV(QMainWindow):
             from reportlab.lib.utils import ImageReader
         except Exception as e:
             QMessageBox.warning(
-                self,
-                "Brak biblioteki",
+                self, "Brak biblioteki",
                 "Do eksportu PDF potrzebny jest pakiet 'reportlab'.\nZainstaluj: pip install reportlab"
             )
             self.log(f"Brak reportlab: {e}")
@@ -929,10 +869,7 @@ class AnalizatorCSV(QMainWindow):
         default_name = f"raport_{timestamp}.pdf"
 
         filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Zapisz raport PDF",
-            default_name,
-            "PDF Files (*.pdf)"
+            self, "Zapisz raport PDF", default_name, "PDF Files (*.pdf)"
         )
         if not filename:
             return
@@ -944,13 +881,11 @@ class AnalizatorCSV(QMainWindow):
             c = rl_canvas.Canvas(filename, pagesize=A4)
             width, height = A4
 
-            # NAGŁÓWEK
             c.setFont("Helvetica-Bold", 16)
             c.drawString(50, height - 50, "Raport analizy danych CSV")
             c.setFont("Helvetica", 10)
             c.drawString(50, height - 70, "Wygenerowano przez Analizator danych pacjentów")
 
-            # STATYSTYKI
             stats_text = self.stats_text.toPlainText()
             if not stats_text and self.df_filtered is not None:
                 try:
@@ -972,18 +907,15 @@ class AnalizatorCSV(QMainWindow):
 
             c.drawText(text_obj)
 
-            # WYKRES
             if self.last_fig:
                 buf = io.BytesIO()
                 self.last_fig.savefig(buf, format="png", bbox_inches="tight")
                 buf.seek(0)
-
                 img = ImageReader(buf)
                 c.showPage()
                 c.setFont("Helvetica-Bold", 14)
                 c.drawString(50, height - 50, "Wykres")
                 c.drawImage(img, 50, 150, width - 100, height - 250, preserveAspectRatio=True)
-
                 buf.close()
 
             c.save()
