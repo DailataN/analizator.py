@@ -4,9 +4,12 @@ import pandas as pd
 
 def load_table_from_db(db_path, table_name):
     try:
-        conn = sqlite3.connect(db_path)
-        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-        conn.close()
+        if not table_name.replace("_", "").isalnum():
+            raise ValueError("Nieprawidłowa nazwa tabeli.")
+
+        with sqlite3.connect(db_path) as conn:
+            df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+
         return df
     except Exception as e:
-        raise Exception(f"Blad odczytu bazy danych: {e}")
+        raise Exception(f"Błąd odczytu bazy danych: {e}")

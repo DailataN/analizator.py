@@ -2,34 +2,27 @@ import pandas as pd
 
 
 def load_csv_file(filename):
+    encodings = ["utf-8", "utf-8-sig", "iso-8859-2", "cp1250"]
+
+    for sep in [";", ","]:
+        for enc in encodings:
+            try:
+                df = pd.read_csv(
+                    filename,
+                    sep=sep,
+                    engine="c",
+                    encoding=enc,
+                    low_memory=False
+                )
+                # Sprawdź czy separator faktycznie zadziałał –
+                # jeśli jest tylko 1 kolumna, próbuj dalej
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+
+    # Fallback – pozwól pandas samemu wykryć separator
     try:
-        # Najpierw szybka próba (silnik C, separator ;)
-        try:
-            df = pd.read_csv(
-                filename,
-                sep=";",
-                engine="c",
-                encoding="utf-8",
-                low_memory=False
-            )
-            return df
-        except Exception:
-            pass
-
-        # Druga próba (przecinek)
-        try:
-            df = pd.read_csv(
-                filename,
-                sep=",",
-                engine="c",
-                encoding="utf-8",
-                low_memory=False
-            )
-            return df
-        except Exception:
-            pass
-
-        # Dopiero na końcu fallback (wolny)
         df = pd.read_csv(
             filename,
             sep=None,
@@ -37,7 +30,6 @@ def load_csv_file(filename):
             on_bad_lines="skip"
         )
         return df
-
     except Exception as e:
         raise Exception(f"Nie udało się wczytać CSV: {e}")
 

@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-def calculate_selected_stats(df_src, selected_cols, want, group_col=None):
+def calculate_selected_stats(df_src, selected_cols, want, group_col=None, is_filtered=True):
     if df_src is None or df_src.empty:
         raise ValueError("Brak danych do analizy.")
 
@@ -11,7 +11,7 @@ def calculate_selected_stats(df_src, selected_cols, want, group_col=None):
     use_groupby = group_col is not None and group_col != "(brak)" and group_col in df_src.columns
 
     lines = []
-    lines.append(f"Źródło: {'PRZEFILTROWANE' if df_src is not None else 'BRAK'}")
+    lines.append(f"Źródło: {'PRZEFILTROWANE' if is_filtered else 'CAŁE'}")
     if use_groupby:
         lines.append(f"Grupowanie po: {group_col}")
     lines.append(f"Kolumny: {', '.join(selected_cols)}")
@@ -58,22 +58,24 @@ def calculate_selected_stats(df_src, selected_cols, want, group_col=None):
         lines.append(summary_for_group(df_src))
 
     return "\n".join(lines)
+
+
 def compare_filter_impact(df_original, df_filtered):
     if df_original is None or df_filtered is None:
-        raise ValueError("Brak danych do porownania")
+        raise ValueError("Brak danych do porównania")
 
     lines = []
-    lines.append("=== ANALIZA WPLYWU FILTROW ===")
+    lines.append("=== ANALIZA WPŁYWU FILTRÓW ===")
 
     total = len(df_original)
     filtered = len(df_filtered)
 
-    lines.append(f"Liczba rekordow przed filtrem: {total}")
-    lines.append(f"Liczba rekordow po filtrze: {filtered}")
+    lines.append(f"Liczba rekordów przed filtrem: {total}")
+    lines.append(f"Liczba rekordów po filtrze: {filtered}")
 
     if total > 0:
         percent = (filtered / total) * 100
-        lines.append(f"Pozostalo: {percent:.2f}% danych")
+        lines.append(f"Pozostało: {percent:.2f}% danych")
 
     lines.append("—" * 40)
 

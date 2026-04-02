@@ -10,8 +10,8 @@ from analysis.visualization import create_plot
 import io
 import pandas as pd
 import matplotlib
-
 matplotlib.use("Qt5Agg")
+import matplotlib.pyplot as plt
 
 from datetime import datetime
 
@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTabWidget, QTextEdit, QFrame, QSplitter, QFileDialog, QLineEdit,
     QMessageBox, QAction, QComboBox, QListWidget, QListWidgetItem,
-    QRadioButton, QButtonGroup, QCheckBox, QInputDialog, QTableView
+    QRadioButton, QButtonGroup, QCheckBox, QInputDialog, QTableView, QDialog
 )
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -244,11 +244,43 @@ class AnalizatorCSV(QMainWindow):
 
         vbox_plot.addWidget(QLabel("Typ wykresu:"))
         self.combo_chart_type = QComboBox()
-        self.combo_chart_type.addItems(["Auto", "Histogram", "Wykres rozrzutu"])
+        self.combo_chart_type.addItems([
+            "Auto",
+            "Histogram",
+            "Bar chart",
+            "Wykres rozrzutu",
+            "Box plot",
+            "Wykres liniowy"
+        ])
         vbox_plot.addWidget(self.combo_chart_type)
 
+        btn_row = QHBoxLayout()
         self.btn_draw_plot = QPushButton("Rysuj wykres")
-        vbox_plot.addWidget(self.btn_draw_plot)
+        self.btn_fullscreen = QPushButton("🔍 Powiększ wykres")
+        self.btn_fullscreen.setEnabled(False)
+        btn_row.addWidget(self.btn_draw_plot)
+        btn_row.addWidget(self.btn_fullscreen)
+        vbox_plot.addLayout(btn_row)
+
+        # Zakres osi Y
+        self.chk_yrange = QCheckBox("Ustaw zakres osi Y ręcznie")
+        vbox_plot.addWidget(self.chk_yrange)
+
+        yrange_box = QHBoxLayout()
+        yrange_box.addWidget(QLabel("Min:"))
+        self.input_ymin = QLineEdit()
+        self.input_ymin.setPlaceholderText("np. 0")
+        self.input_ymin.setEnabled(False)
+        yrange_box.addWidget(self.input_ymin)
+        yrange_box.addWidget(QLabel("Max:"))
+        self.input_ymax = QLineEdit()
+        self.input_ymax.setPlaceholderText("np. 1000")
+        self.input_ymax.setEnabled(False)
+        yrange_box.addWidget(self.input_ymax)
+        vbox_plot.addLayout(yrange_box)
+
+        self.chk_yrange.toggled.connect(self.input_ymin.setEnabled)
+        self.chk_yrange.toggled.connect(self.input_ymax.setEnabled)
 
         self.plot_info_label = QLabel("Brak danych do wizualizacji.")
         vbox_plot.addWidget(self.plot_info_label)
@@ -286,8 +318,8 @@ class AnalizatorCSV(QMainWindow):
         self.btn_apply_filters.clicked.connect(self.apply_filters)
         self.btn_compute_stats.clicked.connect(self.compute_selected_stats)
         self.btn_draw_plot.clicked.connect(self.show_plot)
+        self.btn_fullscreen.clicked.connect(self.open_fullscreen_plot)
 
-    # LOG
     def log(self, msg):
         self.logs.append(f"> {msg}")
 
@@ -295,12 +327,14 @@ class AnalizatorCSV(QMainWindow):
         return float(value_text.replace(",", "."))
 
     def _clear_plot_area(self):
+        if self.last_fig is not None:
+            plt.close(self.last_fig)
+            self.last_fig = None
         while self.plot_container_layout.count():
             item = self.plot_container_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
-
         self.canvas = None
 
     def _refresh_ui_after_load(self):
@@ -336,7 +370,6 @@ class AnalizatorCSV(QMainWindow):
         self.stats_text.clear()
         self._clear_plot_area()
         self.plot_info_label.setText("Brak danych do wizualizacji.")
-        self.last_fig = None
 
     # WCZYTYWANIE PLIKU
     def load_file(self):
@@ -550,7 +583,10 @@ class AnalizatorCSV(QMainWindow):
         }
 
         try:
-            result = calculate_selected_stats(df_src, selected_cols, want, group_col)
+            result = calculate_selected_stats(
+                df_src, selected_cols, want, group_col,
+                is_filtered=self.radio_scope_filtered.isChecked()
+            )
             self.stats_text.setPlainText(result)
             self.log("Obliczono statystyki.")
             self.tabs.setCurrentIndex(2)
@@ -573,8 +609,29 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Brak kolumny", "Wybierz przynajmniej kolumnę X.")
             return
 
+        # Odczytaj zakres osi Y jeśli ustawiony
+        y_min = None
+        y_max = None
+        if self.chk_yrange.isChecked():
+            try:
+                y_min = float(self.input_ymin.text().replace(",", "."))
+            except ValueError:
+                QMessageBox.warning(self, "Błąd", "Nieprawidłowa wartość Min osi Y.")
+                return
+            try:
+                y_max = float(self.input_ymax.text().replace(",", "."))
+            except ValueError:
+                QMessageBox.warning(self, "Błąd", "Nieprawidłowa wartość Max osi Y.")
+                return
+            if y_min >= y_max:
+                QMessageBox.warning(self, "Błąd", "Min musi być mniejsze niż Max.")
+                return
+
         try:
-            fig, final_chart_type = create_plot(self.df_filtered, col_x, col_y, chart_type)
+            fig, final_chart_type = create_plot(
+                self.df_filtered, col_x, col_y, chart_type,
+                y_min=y_min, y_max=y_max
+            )
         except Exception as e:
             QMessageBox.warning(self, "Błąd wykresu", str(e))
             self.log(f"Błąd wykresu: {e}")
@@ -588,12 +645,36 @@ class AnalizatorCSV(QMainWindow):
 
         self.last_fig = fig
         self.plot_info_label.setText("")
+        self.btn_fullscreen.setEnabled(True)
 
         self.tabs.setCurrentIndex(3)
         self.log(
             f"Wygenerowano wykres ({final_chart_type}) dla kolumny {col_x}"
             + (f" i {col_y}" if col_y and col_y != "(brak)" else "")
+            + (f" [Y: {y_min}–{y_max}]" if y_min is not None else "")
         )
+
+    def open_fullscreen_plot(self):
+        if self.last_fig is None:
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Podgląd wykresu")
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setMinimumSize(900, 600)
+        dialog.resize(1100, 700)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        canvas = FigureCanvas(self.last_fig)
+        layout.addWidget(canvas)
+
+        from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+        toolbar = NavigationToolbar(canvas, dialog)
+        layout.addWidget(toolbar)
+
+        dialog.exec_()
 
     # ANALIZA WPŁYWU FILTRÓW
     def compare_filters(self):
