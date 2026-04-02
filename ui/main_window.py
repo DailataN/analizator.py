@@ -138,12 +138,26 @@ class AnalizatorCSV(QMainWindow):
         self.combo_op.addItems(["=", ">", "<", ">=", "<=", "zawiera", "nie zawiera"])
         vbox_filter.addWidget(self.combo_op)
 
-        vbox_filter.addWidget(QLabel("Wprowadź wartość (np. 50, male, 2024-01-01):"))
+        self.filter_value_label = QLabel("Wartość:")
+        vbox_filter.addWidget(self.filter_value_label)
+
+        # Pole tekstowe dla liczb
         self.input_value = QLineEdit()
+        self.input_value.setPlaceholderText("np. 50 lub 5,5")
         vbox_filter.addWidget(self.input_value)
 
+        # Lista rozwijana dla tekstu (domyślnie ukryta)
+        self.combo_value = QComboBox()
+        self.combo_value.setVisible(False)
+        vbox_filter.addWidget(self.combo_value)
+
+        btn_condition_row = QHBoxLayout()
         self.btn_add_condition = QPushButton("Dodaj warunek")
-        vbox_filter.addWidget(self.btn_add_condition)
+        self.btn_remove_condition = QPushButton("Usuń zaznaczony")
+        self.btn_remove_condition.setEnabled(False)
+        btn_condition_row.addWidget(self.btn_add_condition)
+        btn_condition_row.addWidget(self.btn_remove_condition)
+        vbox_filter.addLayout(btn_condition_row)
 
         vbox_filter.addWidget(QLabel("Aktywne warunki:"))
         self.list_filters = QListWidget()
@@ -314,11 +328,17 @@ class AnalizatorCSV(QMainWindow):
         self.btn_export_pdf.clicked.connect(self.export_pdf)
         self.btn_export_csv.clicked.connect(self.export_csv)
         self.btn_add_condition.clicked.connect(self.add_condition)
+        self.btn_remove_condition.clicked.connect(self.remove_condition)
+        self.list_filters.itemSelectionChanged.connect(
+            lambda: self.btn_remove_condition.setEnabled(
+                len(self.list_filters.selectedItems()) > 0
+            ))
         self.btn_clear_filters.clicked.connect(self.clear_filters)
         self.btn_apply_filters.clicked.connect(self.apply_filters)
         self.btn_compute_stats.clicked.connect(self.compute_selected_stats)
         self.btn_draw_plot.clicked.connect(self.show_plot)
         self.btn_fullscreen.clicked.connect(self.open_fullscreen_plot)
+        self.combo_col.currentTextChanged.connect(self._update_value_widget)
 
     def log(self, msg):
         self.logs.append(f"> {msg}")
@@ -457,21 +477,187 @@ class AnalizatorCSV(QMainWindow):
         self.preview_label.setText(f"Podgląd danych: {len(df)} rekordów")
         self.log(f"Załadowano do widoku: {len(df)} wierszy")
 
+    def _update_value_widget(self, col_name):
+        if self.df is None or col_name not in self.df.columns:
+            return
+
+        series = self.df[col_name]
+        is_numeric = pd.api.types.is_numeric_dtype(series) or \
+                     pd.to_numeric(series, errors="coerce").notna().mean() > 0.5
+
+        if is_numeric:
+            # Kolumna numeryczna — pole tekstowe
+            self.input_value.setVisible(True)
+            self.combo_value.setVisible(False)
+            self.filter_value_label.setText("Wartość:")
+            self.input_value.setPlaceholderText("np. 50 lub 5,5")
+        else:
+            # Kolumna tekstowa — lista rozwijana
+            all_unique = series.dropna().astype(str).unique()
+            n_total = len(all_unique)
+
+            # Ogranicz do 500 wartości żeby nie blokować GUI
+            MAX_VALUES = 500
+            if n_total > MAX_VALUES:
+                unique_vals = sorted(all_unique[:MAX_VALUES])
+                label = f"Wartość (pokazano {MAX_VALUES} z {n_total}):"
+            else:
+                unique_vals = sorted(all_unique)
+                label = f"Wartość ({n_total} unikalnych):"
+
+            self.combo_value.clear()
+            self.combo_value.blockSignals(True)  # blokuj sygnały podczas wypełniania
+            self.combo_value.addItems(unique_vals)
+            self.combo_value.blockSignals(False)
+            self.combo_value.setVisible(True)
+            self.input_value.setVisible(False)
+            self.filter_value_label.setText(label)
+
     # FILTRY
     def add_condition(self):
         col = self.combo_col.currentText()
         op = self.combo_op.currentText()
-        val = self.input_value.text().strip()
+
+        # Pobierz wartość z właściwego widgetu
+        if self.combo_value.isVisible():
+            val = self.combo_value.currentText().strip()
+        else:
+            val = self.input_value.text().strip()
 
         if not col or not val:
             QMessageBox.information(self, "Brak danych", "Wybierz kolumnę i wprowadź wartość.")
             return
+
+        # Walidacja dla operatorów numerycznych
+        if op in [">", "<", ">=", "<="]:
+            try:
+                self._parse_numeric_value(val)
+            except ValueError:
+                QMessageBox.warning(
+                    self, "Błąd wartości",
+                    f"Operator '{op}' wymaga wartości liczbowej.\nWprowadź liczbę (np. 50 lub 5,5)."
+                )
+                return
 
         condition = (col, op, val)
         self.filters.append(condition)
         self.list_filters.addItem(f"{col} {op} {val}")
         self.input_value.clear()
         self.log(f"Dodano warunek: {col} {op} {val}")
+
+    def remove_condition(self):
+        selected = self.list_filters.selectedItems()
+        if not selected:
+            return
+
+        for item in selected:
+            row = self.list_filters.row(item)
+            self.list_filters.takeItem(row)
+            if 0 <= row < len(self.filters):
+                removed = self.filters.pop(row)
+                self.log(f"Usunięto warunek: {removed[0]} {removed[1]} {removed[2]}")
+
+        self.btn_remove_condition.setEnabled(False)
+
+    def clear_filters(self):
+        self.filters.clear()
+        self.list_filters.clear()
+        self.input_value.clear()
+        self.radio_and.setChecked(True)
+        self.btn_remove_condition.setEnabled(False)
+
+        if self.df is not None:
+            self.df_filtered = self.df.copy()
+            self.update_table(self.df)
+
+        self.log("Wyczyszczono wszystkie filtry.")
+
+    def apply_filters(self):
+        if self.df is None:
+            QMessageBox.information(self, "Filtry", "Najpierw wczytaj dane.")
+            return
+
+        if not self.filters:
+            QMessageBox.information(self, "Filtry", "Nie dodano żadnych warunków.")
+            return
+
+        logic = "and" if self.radio_and.isChecked() else "or"
+        masks = []
+        errors = []
+
+        # Przelicz konwersje kolumn raz — cache dla wydajności
+        col_cache = {}
+        for col, op, val in self.filters:
+            if col not in col_cache:
+                series_str = self.df[col].astype(str)
+                series_num = pd.to_numeric(
+                    series_str.str.replace(",", ".", regex=False),
+                    errors="coerce"
+                )
+                col_cache[col] = (series_str, series_num)
+
+        for col, op, val in self.filters:
+            series_str, series_num = col_cache[col]
+
+            try:
+                if op == "=":
+                    mask = series_str.str.lower() == val.lower()
+                    try:
+                        vnum = self._parse_numeric_value(val)
+                        mask = mask | (series_num == vnum)
+                    except ValueError:
+                        pass
+
+                elif op == ">":
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num > vnum
+
+                elif op == "<":
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num < vnum
+
+                elif op == ">=":
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num >= vnum
+
+                elif op == "<=":
+                    vnum = self._parse_numeric_value(val)
+                    mask = series_num <= vnum
+
+                elif op == "zawiera":
+                    mask = series_str.str.contains(val, case=False, na=False)
+
+                elif op == "nie zawiera":
+                    mask = ~series_str.str.contains(val, case=False, na=False)
+
+                else:
+                    mask = pd.Series([True] * len(self.df), index=self.df.index)
+
+                masks.append(mask.fillna(False))
+
+            except Exception as e:
+                errors.append(f"Warunek '{col} {op} {val}': {e}")
+                masks.append(pd.Series([False] * len(self.df), index=self.df.index))
+
+        # Pokaż błędy jeśli wystąpiły
+        if errors:
+            QMessageBox.warning(
+                self, "Błędy filtrowania",
+                "Niektóre warunki nie zadziałały:\n" + "\n".join(errors)
+            )
+
+        final_mask = masks[0]
+        for m in masks[1:]:
+            final_mask = (final_mask & m) if logic == "and" else (final_mask | m)
+
+        self.df_filtered = self.df.loc[final_mask].copy()
+        self.update_table(self.df_filtered)
+        self.tabs.setCurrentIndex(0)
+
+        self.log(
+            f"Zastosowano {len(self.filters)} filtrów ({logic.upper()}); "
+            f"wyników: {len(self.df_filtered)} z {len(self.df)}"
+        )
 
     def clear_filters(self):
         self.filters.clear()
