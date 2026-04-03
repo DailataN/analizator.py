@@ -922,80 +922,334 @@ class AnalizatorCSV(QMainWindow):
 
     # EKSPORT PDF
     def export_pdf(self):
-        if self.df_filtered is None or self.df_filtered.empty:
+        # Sprawdź czy są jakiekolwiek dane do raportu
+        has_data = self.df_filtered is not None and not self.df_filtered.empty
+        has_sql = hasattr(self, "sql_df") and self.sql_df is not None
+
+        if not has_data and not has_sql:
             QMessageBox.warning(self, "Brak danych", "Brak danych do eksportu.")
             return
 
         try:
             from reportlab.lib.pagesizes import A4
-            from reportlab.pdfgen import canvas as rl_canvas
-            from reportlab.lib.utils import ImageReader
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Brak biblioteki",
-                "Do eksportu PDF potrzebny jest pakiet 'reportlab'.\nZainstaluj: pip install reportlab"
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import cm
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+            from reportlab.platypus import (
+                SimpleDocTemplate, Paragraph, Spacer, Table,
+                TableStyle, PageBreak, HRFlowable
             )
-            self.log(f"Brak reportlab: {e}")
+            from reportlab.lib import colors
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.platypus import Image as RLImage
+            import os
+        except Exception as e:
+            QMessageBox.warning(self, "Brak biblioteki",
+                                "Zainstaluj: pip install reportlab")
             return
+
+        # Rejestracja czcionki
+        font_paths = [
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/calibri.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        font_name = "Helvetica"
+        font_bold = "Helvetica-Bold"
+        for fp in font_paths:
+            if os.path.exists(fp):
+                try:
+                    pdfmetrics.registerFont(TTFont("PolishFont", fp))
+                    bold_path = fp.replace("arial.ttf", "arialbd.ttf").replace(
+                        "calibri.ttf", "calibrib.ttf").replace(
+                        "DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
+                    if os.path.exists(bold_path):
+                        pdfmetrics.registerFont(TTFont("PolishFontBold", bold_path))
+                        font_bold = "PolishFontBold"
+                    font_name = "PolishFont"
+                    break
+                except Exception:
+                    continue
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"raport_{timestamp}.pdf"
-
         filename, _ = QFileDialog.getSaveFileName(
             self, "Zapisz raport PDF", default_name, "PDF Files (*.pdf)"
         )
         if not filename:
             return
-
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
 
         try:
-            c = rl_canvas.Canvas(filename, pagesize=A4)
-            width, height = A4
+            doc = SimpleDocTemplate(
+                filename, pagesize=A4,
+                topMargin=2 * cm, bottomMargin=2 * cm,
+                leftMargin=2.5 * cm, rightMargin=2.5 * cm
+            )
 
-            c.setFont("Helvetica-Bold", 16)
-            c.drawString(50, height - 50, "Raport analizy danych CSV")
-            c.setFont("Helvetica", 10)
-            c.drawString(50, height - 70, "Wygenerowano przez Analizator danych pacjentów")
+            # Style
+            styles = getSampleStyleSheet()
+            style_title = ParagraphStyle("Title",
+                                         fontName=font_bold, fontSize=22,
+                                         textColor=colors.HexColor("#1a2e4a"),
+                                         alignment=TA_CENTER, spaceAfter=6)
+            style_subtitle = ParagraphStyle("Subtitle",
+                                            fontName=font_name, fontSize=12,
+                                            textColor=colors.HexColor("#555555"),
+                                            alignment=TA_CENTER, spaceAfter=4)
+            style_h1 = ParagraphStyle("H1",
+                                      fontName=font_bold, fontSize=14,
+                                      textColor=colors.HexColor("#1a2e4a"),
+                                      spaceBefore=16, spaceAfter=8)
+            style_h2 = ParagraphStyle("H2",
+                                      fontName=font_bold, fontSize=12,
+                                      textColor=colors.HexColor("#2563eb"),
+                                      spaceBefore=12, spaceAfter=6)
+            style_body = ParagraphStyle("Body",
+                                        fontName=font_name, fontSize=10,
+                                        textColor=colors.HexColor("#1f2937"),
+                                        leading=16, alignment=TA_JUSTIFY,
+                                        spaceAfter=8)
+            style_mono = ParagraphStyle("Mono",
+                                        fontName=font_name, fontSize=9,
+                                        textColor=colors.HexColor("#374151"),
+                                        leading=14, spaceAfter=4)
 
+            story = []
+
+            # ── STRONA TYTUŁOWA ──────────────────────────────────────
+            story.append(Spacer(1, 3 * cm))
+            story.append(Paragraph("Analizator Danych Pacjentów", style_title))
+            story.append(Paragraph("Raport z analizy danych medycznych", style_subtitle))
+            story.append(Spacer(1, 0.5 * cm))
+            story.append(HRFlowable(width="100%", thickness=1,
+                                    color=colors.HexColor("#2563eb")))
+            story.append(Spacer(1, 0.5 * cm))
+            story.append(Paragraph(
+                f"Data wygenerowania: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                style_subtitle))
+
+            if has_data:
+                story.append(Paragraph(
+                    f"Liczba rekordów: {len(self.df_filtered):,} "
+                    f"(z {len(self.df):,} całkowitych)",
+                    style_subtitle))
+                story.append(Paragraph(
+                    f"Liczba kolumn: {len(self.df_filtered.columns)}",
+                    style_subtitle))
+
+            story.append(PageBreak())
+
+            # ── METODOLOGIA ──────────────────────────────────────────
+            story.append(Paragraph("1. Cel i metodologia", style_h1))
+            story.append(HRFlowable(width="100%", thickness=0.5,
+                                    color=colors.HexColor("#d1d5db")))
+            story.append(Spacer(1, 0.3 * cm))
+
+            story.append(Paragraph("Cel analizy", style_h2))
+            story.append(Paragraph(
+                "Niniejszy raport przedstawia wyniki analizy danych medycznych "
+                "z wykorzystaniem aplikacji Analizator Danych Pacjentów. "
+                "Celem analizy jest eksploracja danych klinicznych, identyfikacja "
+                "wzorców oraz ocena wpływu zastosowanych parametrów filtrowania "
+                "na uzyskane wyniki statystyczne.",
+                style_body))
+
+            story.append(Paragraph("Pipeline przetwarzania danych", style_h2))
+            pipeline_steps = [
+                ("1. Import danych", "Wczytanie danych z pliku CSV, Excel lub bazy SQLite."),
+                ("2. Walidacja", "Sprawdzenie kompletności danych, wykrycie braków i błędów typów."),
+                ("3. Czyszczenie", "Usunięcie nadmiarowych spacji, ujednolicenie formatów liczbowych."),
+                ("4. Filtrowanie", "Zastosowanie warunków filtrowania z operatorami numerycznymi i tekstowymi."),
+                ("5. Analiza SQL", "Wykonanie zapytań JOIN między tabelami relacyjnymi."),
+                ("6. Statystyki", "Obliczenie metryk: count, mean, median, min, max, std z grupowaniem."),
+                ("7. Wizualizacja", "Generowanie wykresów z automatycznym doborem typu na podstawie danych."),
+                ("8. Raport", "Eksport wyników do pliku PDF z opisem metodologii i wnioskami."),
+            ]
+            for step, desc in pipeline_steps:
+                story.append(Paragraph(
+                    f"<b>{step}:</b> {desc}", style_body))
+
+            # Aktywne filtry
+            if self.filters:
+                story.append(Paragraph("Zastosowane filtry", style_h2))
+                logic = "AND" if self.radio_and.isChecked() else "OR"
+                for col, op, val in self.filters:
+                    story.append(Paragraph(
+                        f"• {col} {op} {val}", style_mono))
+                story.append(Paragraph(
+                    f"Logika łączenia warunków: {logic}", style_mono))
+
+            story.append(PageBreak())
+
+            # ── STATYSTYKI ───────────────────────────────────────────
+            story.append(Paragraph("2. Wyniki analizy statystycznej", style_h1))
+            story.append(HRFlowable(width="100%", thickness=0.5,
+                                    color=colors.HexColor("#d1d5db")))
+            story.append(Spacer(1, 0.3 * cm))
+
+            # Statystyki z edytora
             stats_text = self.stats_text.toPlainText()
-            if not stats_text and self.df_filtered is not None:
+            if stats_text:
+                story.append(Paragraph("Obliczone metryki", style_h2))
+                for line in stats_text.splitlines():
+                    if line.strip():
+                        story.append(Paragraph(line, style_mono))
+                story.append(Spacer(1, 0.3 * cm))
+
+            # Statystyki opisowe z pandas
+            if has_data:
+                story.append(Paragraph("Statystyki opisowe (dane przefiltrowane)", style_h2))
                 try:
-                    desc = self.df_filtered.describe(include="all")
-                    stats_text = str(desc)
+                    desc = self.df_filtered.describe(include="number").round(3)
+                    table_data = [[""] + list(desc.columns)]
+                    for idx in desc.index:
+                        row = [idx] + [str(v) for v in desc.loc[idx]]
+                        table_data.append(row)
+
+                    col_width = (doc.width - 2 * cm) / len(desc.columns + [""])
+                    col_widths = [3 * cm] + [col_width] * len(desc.columns)
+
+                    tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+                    tbl.setStyle(TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a2e4a")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, 0), font_bold),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8),
+                        ("FONTNAME", (0, 1), (-1, -1), font_name),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                         [colors.white, colors.HexColor("#f0f4ff")]),
+                        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#d1d5db")),
+                        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ]))
+                    story.append(tbl)
                 except Exception:
-                    stats_text = "Brak statystyk (nie udało się wygenerować)."
+                    pass
 
-            c.setFont("Helvetica", 11)
-            text_obj = c.beginText(50, height - 110)
+            # Wyniki SQL
+            if has_sql:
+                story.append(Spacer(1, 0.5 * cm))
+                story.append(Paragraph("Wyniki zapytania SQL", style_h2))
+                try:
+                    sql_preview = self.sql_df.head(20)
+                    table_data = [list(sql_preview.columns)]
+                    for _, row in sql_preview.iterrows():
+                        table_data.append([str(v) for v in row])
 
-            for line in stats_text.splitlines():
-                if text_obj.getY() < 120:
-                    c.drawText(text_obj)
-                    c.showPage()
-                    c.setFont("Helvetica", 11)
-                    text_obj = c.beginText(50, height - 50)
-                text_obj.textLine(line)
+                    n_cols = len(sql_preview.columns)
+                    col_w = doc.width / n_cols
+                    tbl = Table(table_data,
+                                colWidths=[col_w] * n_cols, repeatRows=1)
+                    tbl.setStyle(TableStyle([
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563eb")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("FONTNAME", (0, 0), (-1, 0), font_bold),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8),
+                        ("FONTNAME", (0, 1), (-1, -1), font_name),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                         [colors.white, colors.HexColor("#f0f4ff")]),
+                        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#d1d5db")),
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("TOPPADDING", (0, 0), (-1, -1), 3),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                    ]))
+                    story.append(tbl)
+                    if len(self.sql_df) > 20:
+                        story.append(Paragraph(
+                            f"Pokazano 20 z {len(self.sql_df)} wyników.",
+                            style_mono))
+                except Exception:
+                    pass
 
-            c.drawText(text_obj)
+            # ── WYKRES ───────────────────────────────────────────────
+            if hasattr(self, "_plot_buf") and self._plot_buf is not None:
+                story.append(PageBreak())
+                story.append(Paragraph("3. Wizualizacja danych", style_h1))
+                story.append(HRFlowable(width="100%", thickness=0.5,
+                                        color=colors.HexColor("#d1d5db")))
+                story.append(Spacer(1, 0.3 * cm))
+                try:
+                    self._plot_buf.seek(0)
+                    img = RLImage(self._plot_buf,
+                                  width=doc.width, height=doc.width * 0.6)
+                    story.append(img)
+                except Exception:
+                    pass
 
-            if self.last_fig:
-                buf = io.BytesIO()
-                self.last_fig.savefig(buf, format="png", bbox_inches="tight")
-                buf.seek(0)
-                img = ImageReader(buf)
-                c.showPage()
-                c.setFont("Helvetica-Bold", 14)
-                c.drawString(50, height - 50, "Wykres")
-                c.drawImage(img, 50, 150, width - 100, height - 250, preserveAspectRatio=True)
-                buf.close()
+            # ── WNIOSKI ──────────────────────────────────────────────
+            story.append(PageBreak())
+            story.append(Paragraph("4. Wnioski", style_h1))
+            story.append(HRFlowable(width="100%", thickness=0.5,
+                                    color=colors.HexColor("#d1d5db")))
+            story.append(Spacer(1, 0.3 * cm))
 
-            c.save()
+            # Automatyczne wnioski na podstawie danych
+            wnioski = []
+
+            if has_data:
+                n_total = len(self.df)
+                n_filt = len(self.df_filtered)
+                pct = (n_filt / n_total * 100) if n_total > 0 else 0
+                wnioski.append(
+                    f"Po zastosowaniu {len(self.filters)} filtrów pozostało "
+                    f"{n_filt:,} rekordów ({pct:.1f}% zbioru wejściowego)."
+                )
+
+                # Braki danych
+                missing = self.df_filtered.isnull().sum()
+                missing_cols = missing[missing > 0]
+                if len(missing_cols) > 0:
+                    wnioski.append(
+                        f"Wykryto braki danych w {len(missing_cols)} kolumnach: "
+                        f"{', '.join(missing_cols.index[:3])}."
+                    )
+                else:
+                    wnioski.append("Zbiór danych nie zawiera braków danych.")
+
+                # Kolumny numeryczne
+                num_cols = self.df_filtered.select_dtypes(include="number").columns
+                if len(num_cols) > 0:
+                    wnioski.append(
+                        f"Analiza obejmuje {len(num_cols)} kolumn numerycznych "
+                        f"i {len(self.df_filtered.columns) - len(num_cols)} "
+                        f"kolumn tekstowych."
+                    )
+
+            if has_sql:
+                wnioski.append(
+                    f"Zapytanie SQL zwróciło {len(self.sql_df):,} rekordów "
+                    f"z {len(self.sql_df.columns)} kolumnami."
+                )
+
+            wnioski.append(
+                "Analiza została przeprowadzona z wykorzystaniem aplikacji "
+                "Analizator Danych Pacjentów, zbudowanej w Pythonie z użyciem "
+                "bibliotek pandas, matplotlib i PyQt5."
+            )
+
+            for w in wnioski:
+                story.append(Paragraph(f"• {w}", style_body))
+
+            story.append(Spacer(1, 1 * cm))
+            story.append(HRFlowable(width="100%", thickness=0.5,
+                                    color=colors.HexColor("#d1d5db")))
+            story.append(Paragraph(
+                f"Raport wygenerowany: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",
+                style_subtitle))
+
+            doc.build(story)
 
             self.log(f"Zapisano raport: {filename}")
-            QMessageBox.information(self, "Sukces", f"Raport zapisano jako:\n{filename}")
+            QMessageBox.information(self, "Sukces",
+                                    f"Raport zapisano jako:\n{filename}")
 
         except Exception as e:
-            QMessageBox.warning(self, "Błąd PDF", f"Nie udało się zapisać raportu:\n{e}")
+            QMessageBox.warning(self, "Błąd PDF",
+                                f"Nie udało się zapisać raportu:\n{e}")
             self.log(f"Błąd eksportu PDF: {e}")
