@@ -449,7 +449,7 @@ class AnalizatorCSV(QMainWindow):
         try:
             with sqlite3.connect(db_path) as conn:
                 tables = pd.read_sql_query(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", #noqa
                     conn
                 )["name"].tolist()
         except Exception as e:
@@ -830,6 +830,17 @@ class AnalizatorCSV(QMainWindow):
         layout.addWidget(toolbar)
 
         dialog.exec_()
+
+        # Odłącz zdarzenia matplotlib po zamknięciu okna
+        # żeby uniknąć błędu QLabel has been deleted
+        try:
+            canvas.mpl_disconnect_all()
+        except Exception:
+            pass
+        try:
+            self.last_fig.canvas.mpl_disconnect_all()
+        except Exception:
+            pass
 
     # ANALIZA WPŁYWU FILTRÓW
     def compare_filters(self):

@@ -290,7 +290,28 @@ def generate_report(
 
     if stats_text:
         c.setFont(font, 9)
-        for line in stats_text.splitlines():
+        lines_to_print = stats_text.splitlines()
+
+        # Ogranicz do max 10 grup żeby nie zaśmiecać raportu
+        group_count = sum(1 for l in lines_to_print if l.startswith("[Grupa:"))
+        if group_count > 10:
+            # Pokaż tylko nagłówek i pierwsze 10 grup
+            filtered_lines = []
+            current_group = 0
+            skip = False
+            for line in lines_to_print:
+                if line.startswith("[Grupa:"):
+                    current_group += 1
+                    skip = current_group > 10
+                    if current_group == 11:
+                        filtered_lines.append(
+                            f"... (pokazano 10 z {group_count} grup — pelne dane w aplikacji)"
+                        )
+                if not skip:
+                    filtered_lines.append(line)
+            lines_to_print = filtered_lines
+
+        for line in lines_to_print:
             if y < 60:
                 c.showPage()
                 page_num += 1
@@ -307,7 +328,14 @@ def generate_report(
 
     data_src = df_filtered if source == "csv" else sql_df
     if data_src is not None and not data_src.empty:
-        num_cols = data_src.select_dtypes(include="number").columns.tolist()[:6]
+        # Preferuj kolumny kliniczne jeśli istnieją
+        preferred = ["age", "bmi", "systolic_bp", "diastolic_bp", "heart_rate", "charlson_index"]
+        all_num = data_src.select_dtypes(include="number").columns.tolist()
+        num_cols = [col_name for col_name in preferred if col_name in all_num]
+        if not num_cols:
+            num_cols = all_num[:6]
+        else:
+            num_cols = num_cols[:6]
         if num_cols:
             if y < 200:
                 c.showPage()
