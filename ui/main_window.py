@@ -9,6 +9,7 @@ from analysis.visualization import create_plot
 
 import io
 import pandas as pd
+import sqlite3
 import matplotlib
 matplotlib.use("Qt5Agg")
 import matplotlib.pyplot as plt
@@ -26,7 +27,6 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-1
 
 # WĄTEK DO WCZYTYWANIA PLIKÓW
 class FileLoaderThread(QThread):
