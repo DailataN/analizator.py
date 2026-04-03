@@ -96,3 +96,75 @@ def compare_filter_impact(df_original, df_filtered):
     lines.append("—" * 40)
 
     return "\n".join(lines)
+def analyze_filter_impact(df_original, df_filtered, numeric_cols=None):
+    """Porównuje statystyki przed i po filtrze dla kolumn numerycznych."""
+    if df_original is None or df_filtered is None:
+        raise ValueError("Brak danych do porównania.")
+
+    if numeric_cols is None:
+        numeric_cols = df_original.select_dtypes(include="number").columns.tolist()
+
+    if not numeric_cols:
+        raise ValueError("Brak kolumn numerycznych do analizy.")
+
+    lines = []
+    lines.append("=== ANALIZA WPŁYWU PARAMETRÓW FILTROWANIA ===\n")
+
+    total = len(df_original)
+    filtered = len(df_filtered)
+    pct = filtered / total * 100 if total > 0 else 0
+
+    lines.append(f"Rekordów przed filtrem: {total:,}")
+    lines.append(f"Rekordów po filtrze:    {filtered:,}")
+    lines.append(f"Pozostało:              {pct:.1f}% danych")
+    lines.append("—" * 55)
+
+    lines.append(f"\n{'Kolumna':<20} {'Przed':>10} {'Po':>10} {'Zmiana':>10} {'%':>8}")
+    lines.append("—" * 55)
+
+    for col in numeric_cols:
+        try:
+            s_before = pd.to_numeric(df_original[col], errors="coerce").dropna()
+            s_after  = pd.to_numeric(df_filtered[col],  errors="coerce").dropna()
+
+            if s_before.empty or s_after.empty:
+                continue
+
+            mean_before = s_before.mean()
+            mean_after  = s_after.mean()
+            delta       = mean_after - mean_before
+            delta_pct   = (delta / mean_before * 100) if mean_before != 0 else 0
+            sign        = "+" if delta >= 0 else ""
+
+            lines.append(
+                f"{col:<20} {mean_before:>10.3g} {mean_after:>10.3g} "
+                f"{sign}{delta:>9.3g} {sign}{delta_pct:>6.1f}%"
+            )
+        except Exception:
+            continue
+
+    lines.append("—" * 55)
+    lines.append("\nMediany:")
+    lines.append(f"\n{'Kolumna':<20} {'Przed':>10} {'Po':>10} {'Zmiana':>10}")
+    lines.append("—" * 45)
+
+    for col in numeric_cols:
+        try:
+            s_before = pd.to_numeric(df_original[col], errors="coerce").dropna()
+            s_after  = pd.to_numeric(df_filtered[col],  errors="coerce").dropna()
+
+            if s_before.empty or s_after.empty:
+                continue
+
+            med_before = s_before.median()
+            med_after  = s_after.median()
+            delta      = med_after - med_before
+            sign       = "+" if delta >= 0 else ""
+
+            lines.append(
+                f"{col:<20} {med_before:>10.3g} {med_after:>10.3g} {sign}{delta:>9.3g}"
+            )
+        except Exception:
+            continue
+
+    return "\n".join(lines)

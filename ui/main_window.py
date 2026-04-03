@@ -4,7 +4,7 @@ from data.loader import load_csv_file, load_excel_file
 from data.validator import validate_dataframe
 from data.cleaner import clean_dataframe
 from data.database import load_table_from_db
-from analysis.stats import calculate_selected_stats, compare_filter_impact
+from analysis.stats import calculate_selected_stats, compare_filter_impact, analyze_filter_impact
 from analysis.visualization import create_plot
 
 import io
@@ -23,9 +23,10 @@ from PyQt5.QtWidgets import (
     QRadioButton, QButtonGroup, QCheckBox, QInputDialog, QTableView, QDialog,
     QApplication
 )
+from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-
+1
 
 # WĄTEK DO WCZYTYWANIA PLIKÓW
 class FileLoaderThread(QThread):
@@ -444,11 +445,35 @@ class AnalizatorCSV(QMainWindow):
         if not db_path:
             return
 
-        table_name, ok = QInputDialog.getText(self, "Tabela", "Podaj nazwę tabeli:")
-        if not ok or not table_name.strip():
+        # Pobierz listę tabel z bazy
+        try:
+            with sqlite3.connect(db_path) as conn:
+                tables = pd.read_sql_query(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+                    conn
+                )["name"].tolist()
+        except Exception as e:
+            QMessageBox.warning(self, "Błąd", f"Nie można otworzyć bazy:\n{e}")
             return
 
-        self._start_loader(db_path=db_path, table_name=table_name.strip())
+        if not tables:
+            QMessageBox.warning(self, "Brak tabel", "Baza danych nie zawiera żadnych tabel.")
+            return
+
+        # Pokaż listę tabel do wyboru bez znaku zapytania
+        dialog = QInputDialog(self)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setWindowTitle("Wybierz tabelę")
+        dialog.setLabelText(f"Dostępne tabele w bazie ({len(tables)}):")
+        dialog.setComboBoxItems(tables)
+        dialog.setComboBoxEditable(False)
+        ok = dialog.exec_()
+        table_name = dialog.textValue()
+        if not ok or not table_name:
+            return
+
+        self.current_db_path = db_path
+        self._start_loader(db_path=db_path, table_name=table_name)
 
     def _start_loader(self, filename=None, db_path=None, table_name=None):
         self.btn_load.setEnabled(False)
@@ -817,12 +842,60 @@ class AnalizatorCSV(QMainWindow):
             return
 
         try:
-            result = compare_filter_impact(self.df, self.df_filtered)
-            QMessageBox.information(self, "Analiza wpływu", result)
-            self.log("Wykonano analizę wpływu filtrów.")
+            # Podstawowe porównanie rekordów
+            basic = compare_filter_impact(self.df, self.df_filtered)
+
+            # Szczegółowa analiza wpływu na statystyki
+            numeric_cols = self.df.select_dtypes(include="number").columns.tolist()
+            detailed = analyze_filter_impact(self.df, self.df_filtered, numeric_cols)
+
+            # Pokaż w osobnym oknie z możliwością scrollowania
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Analiza wpływu parametrów filtrowania")
+            dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            dialog.resize(700, 500)
+
+            layout = QVBoxLayout(dialog)
+
+            text = QTextEdit()
+            text.setReadOnly(True)
+            text.setFont(QFont("Courier New", 10))
+            text.setPlainText(basic + "\n\n" + detailed)
+            layout.addWidget(text)
+
+            btn_close = QPushButton("Zamknij")
+            btn_close.clicked.connect(dialog.close)
+
+            btn_export = QPushButton("💾 Eksport TXT")
+            btn_export.clicked.connect(lambda: self._export_analysis_txt(basic + "\n\n" + detailed))
+
+            btn_row = QHBoxLayout()
+            btn_row.addWidget(btn_export)
+            btn_row.addWidget(btn_close)
+            layout.addLayout(btn_row)
+
+            dialog.exec_()
+            self.log("Wykonano analizę wpływu parametrów filtrowania.")
+
         except Exception as e:
             QMessageBox.warning(self, "Błąd", str(e))
             self.log(f"Błąd analizy wpływu: {e}")
+
+    def _export_analysis_txt(self, content):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Zapisz analizę", f"analiza_wplywu_{timestamp}.txt",
+            "Text Files (*.txt)"
+        )
+        if not filename:
+            return
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(content)
+            self.log(f"Zapisano analizę: {filename}")
+            QMessageBox.information(self, "Sukces", f"Zapisano:\n{filename}")
+        except Exception as e:
+            QMessageBox.warning(self, "Błąd", str(e))
 
     # EKSPORT CSV
     def export_csv(self):
