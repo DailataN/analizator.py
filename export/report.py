@@ -1,18 +1,28 @@
-"""
-Modul generowania raportu PDF dla Analizatora danych pacjentow.
+# =============================================================================
+# OPIS MODUŁU
+# Generowanie raportu PDF dla Analizatora danych pacjentów.
+#
+# Struktura raportu:
+#   1. Strona tytułowa
+#   2. Opis metodologii i pipeline
+#   3. Statystyki
+#   4. Wykres
+#   5. Wnioski automatyczne
+# =============================================================================
 
-Struktura raportu:
-    1. Strona tytulowa
-    2. Opis metodologii i pipeline
-    3. Statystyki
-    4. Wykres
-    5. Wnioski automatyczne
-"""
-
+# =============================================================================
+# IMPORT BIBLIOTEK
+# =============================================================================
 import os
 from datetime import datetime
 
 
+# =============================================================================
+# FUNKCJA POMOCNICZA — WYKRYWANIE CZCIONKI Z OBSŁUGĄ POLSKICH ZNAKÓW
+# Przeszukuje systemowe ścieżki czcionek (Windows i Linux) i rejestruje
+# pierwszą dostępną jako "PolishFont" w ReportLab.
+# Jeśli żadna czcionka TTF nie zostanie znaleziona, zwraca wbudowaną "Helvetica".
+# =============================================================================
 def _get_font():
     try:
         from reportlab.pdfbase import pdfmetrics
@@ -35,6 +45,13 @@ def _get_font():
     return "Helvetica"
 
 
+# =============================================================================
+# FUNKCJA POMOCNICZA — RYSOWANIE NAGŁÓWKA I STOPKI STRONY
+# Umieszcza na każdej stronie:
+#   - nagłówek: tytuł raportu (lewo) i numer strony (prawo)
+#   - linię oddzielającą nagłówek i stopkę od treści
+#   - stopkę: datę generowania i nazwę aplikacji
+# =============================================================================
 def _draw_page_header(c, width, height, font, page_num, title="Raport analizy danych"):
     c.setFont(font, 8)
     c.setFillColorRGB(0.5, 0.5, 0.5)
@@ -47,6 +64,11 @@ def _draw_page_header(c, width, height, font, page_num, title="Raport analizy da
     c.setFillColorRGB(0, 0, 0)
 
 
+# =============================================================================
+# FUNKCJA POMOCNICZA — ZAWIJANIE TEKSTU
+# Dzieli długi tekst na wiersze nieprzekraczające podanej szerokości (max_width).
+# Rysuje kolejne wiersze na canvas i zwraca aktualną pozycję Y po ostatnim wierszu.
+# =============================================================================
 def _wrap_text(c, text, x, y, font, size, max_width, line_height):
     c.setFont(font, size)
     words = text.split()
@@ -65,6 +87,16 @@ def _wrap_text(c, text, x, y, font, size, max_width, line_height):
     return y
 
 
+# =============================================================================
+# FUNKCJA POMOCNICZA — GENEROWANIE AUTOMATYCZNYCH WNIOSKÓW
+# Na podstawie danych przed i po filtracji oraz listy filtrów tworzy
+# listę zdań opisujących wyniki analizy:
+#   - procentowy ubytek rekordów po filtracji
+#   - liczba brakujących wartości
+#   - liczba kolumn numerycznych i tekstowych
+#   - zmiana średniej dla pierwszych 3 kolumn numerycznych (próg: >1%)
+#   - informacja o użytych technologiach
+# =============================================================================
 def _auto_conclusions(df, df_filtered, filters):
     lines = []
     if df is not None and df_filtered is not None:
@@ -88,6 +120,7 @@ def _auto_conclusions(df, df_filtered, filters):
             f"Analiza obejmuje {len(num_cols)} kolumn numerycznych i {len(text_cols)} kolumn tekstowych."
         )
 
+        # Porównanie średnich dla pierwszych 3 kolumn numerycznych
         for col in list(num_cols)[:3]:
             s_orig = df[col].dropna()
             s_filt = df_filtered[col].dropna()
@@ -107,6 +140,12 @@ def _auto_conclusions(df, df_filtered, filters):
     return lines
 
 
+# =============================================================================
+# FUNKCJA GŁÓWNA — GENEROWANIE RAPORTU PDF
+# Tworzy wielostronicowy dokument PDF przy użyciu ReportLab (canvas API).
+# Przyjmuje dane surowe, przefiltrowane, statystyki, wykres i zapytanie SQL.
+# Parametr source="csv" lub "sql" decyduje o źródle danych w raporcie.
+# =============================================================================
 def generate_report(
     filename,
     df=None,
@@ -118,6 +157,7 @@ def generate_report(
     sql_query="",
     source="csv",
 ):
+    # --- IMPORT REPORTLAB (opóźniony, aby nie blokować startu aplikacji) ---
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.lib.utils import ImageReader
@@ -129,9 +169,15 @@ def generate_report(
 
     c = rl_canvas.Canvas(filename, pagesize=A4)
 
-    # STRONA 1: TYTULOWA
+    # =========================================================================
+    # STRONA 1: TYTUŁOWA
+    # Niebieski baner z tytułem, nazwą aplikacji i datą generowania.
+    # Sekcja z informacjami o zbiorze danych (liczba rekordów, kolumny).
+    # Sekcja z listą zastosowanych filtrów (tylko dla źródła CSV).
+    # =========================================================================
     _draw_page_header(c, width, height, font, page_num)
 
+    # Niebieski baner tytułowy
     c.setFillColorRGB(0.13, 0.37, 0.65)
     c.rect(0, height - 140, width, 140, fill=1, stroke=0)
     c.setFillColorRGB(1, 1, 1)
@@ -145,6 +191,7 @@ def generate_report(
         datetime.now().strftime("%d.%m.%Y, %H:%M"))
     c.setFillColorRGB(0, 0, 0)
 
+    # Sekcja: informacje o zbiorze danych
     y = height - 175
     c.setFont(font, 13)
     c.setFillColorRGB(0.13, 0.37, 0.65)
@@ -171,6 +218,7 @@ def generate_report(
             c.drawString(60, y, line)
             y -= 20
 
+    # Sekcja: zastosowane filtry (tylko CSV)
     if filters and source == "csv":
         y -= 10
         c.setFont(font, 13)
@@ -184,7 +232,13 @@ def generate_report(
             c.drawString(60, y, f"• {col} {op} {val}")
             y -= 18
 
+    # =========================================================================
     # STRONA 2: METODOLOGIA
+    # Cel analizy oraz opis 8-krokowego pipeline przetwarzania danych.
+    # Dla źródła SQL — dodatkowo wyświetlane jest użyte zapytanie SQL.
+    # Jeśli treść nie mieści się na jednej stronie, automatycznie
+    # tworzone są kolejne strony.
+    # =========================================================================
     c.showPage()
     page_num += 1
     _draw_page_header(c, width, height, font, page_num)
@@ -197,6 +251,7 @@ def generate_report(
     c.line(50, y - 4, width - 50, y - 4)
     y -= 30
 
+    # Opis celu analizy
     c.setFont(font, 12)
     c.setFillColorRGB(0.13, 0.37, 0.65)
     c.drawString(50, y, "Cel analizy")
@@ -211,6 +266,7 @@ def generate_report(
     y = _wrap_text(c, cel, 50, y, font, 10, width - 100, 14)
     y -= 20
 
+    # Pipeline przetwarzania danych — 8 kroków
     c.setFont(font, 12)
     c.setFillColorRGB(0.13, 0.37, 0.65)
     c.drawString(50, y, "Pipeline przetwarzania danych")
@@ -239,6 +295,7 @@ def generate_report(
     ]
 
     for title, desc in pipeline_steps:
+        # Automatyczne przejście na nową stronę jeśli brakuje miejsca
         if y < 100:
             c.showPage()
             page_num += 1
@@ -252,6 +309,7 @@ def generate_report(
         y = _wrap_text(c, desc, 65, y, font, 10, width - 115, 13)
         y -= 8
 
+    # Sekcja zapytania SQL (tylko dla źródła SQL)
     if source == "sql" and sql_query:
         if y < 150:
             c.showPage()
@@ -275,7 +333,14 @@ def generate_report(
             c.drawString(60, y, line)
             y -= 13
 
+    # =========================================================================
     # STRONA: STATYSTYKI
+    # Wyświetla tekst statystyk z zakładki "Statystyki".
+    # Jeśli liczba grup przekracza 10, raport jest przycinany z adnotacją.
+    # Dodatkowo rysowana jest tabela opisowa (describe) dla kolumn numerycznych
+    # — preferowane kolumny kliniczne (age, bmi, itp.), max 6 kolumn.
+    # Naprzemienne cieniowanie wierszy tabeli dla czytelności.
+    # =========================================================================
     c.showPage()
     page_num += 1
     _draw_page_header(c, width, height, font, page_num)
@@ -292,10 +357,9 @@ def generate_report(
         c.setFont(font, 9)
         lines_to_print = stats_text.splitlines()
 
-        # Ogranicz do max 10 grup żeby nie zaśmiecać raportu
+        # Ograniczenie liczby grup do 10 — zapobiega rozrośnięciu raportu
         group_count = sum(1 for l in lines_to_print if l.startswith("[Grupa:"))
         if group_count > 10:
-            # Pokaż tylko nagłówek i pierwsze 10 grup
             filtered_lines = []
             current_group = 0
             skip = False
@@ -311,6 +375,7 @@ def generate_report(
                     filtered_lines.append(line)
             lines_to_print = filtered_lines
 
+        # Drukowanie linii statystyk z automatycznym łamaniem stron
         for line in lines_to_print:
             if y < 60:
                 c.showPage()
@@ -326,9 +391,10 @@ def generate_report(
         c.setFillColorRGB(0, 0, 0)
         y -= 30
 
+    # Tabela opisowa (describe) dla kolumn numerycznych
     data_src = df_filtered if source == "csv" else sql_df
     if data_src is not None and not data_src.empty:
-        # Preferuj kolumny kliniczne jeśli istnieją
+        # Priorytet dla kolumn klinicznych, fallback na pierwsze 6 numerycznych
         preferred = ["age", "bmi", "systolic_bp", "diastolic_bp", "heart_rate", "charlson_index"]
         all_num = data_src.select_dtypes(include="number").columns.tolist()
         num_cols = [col_name for col_name in preferred if col_name in all_num]
@@ -353,6 +419,7 @@ def generate_report(
             desc = data_src[num_cols].describe().round(2)
             col_w = (width - 100) / (len(num_cols) + 1)
 
+            # Nagłówek tabeli
             c.setFont(font, 8)
             c.setFillColorRGB(0.13, 0.37, 0.65)
             c.drawString(55, y, "Metryka")
@@ -364,6 +431,7 @@ def generate_report(
             c.line(50, y, width - 50, y)
             y -= 14
 
+            # Wiersze tabeli z naprzemiennym cieniowaniem
             for idx, row_name in enumerate(desc.index):
                 c.setFont(font, 8)
                 if idx % 2 == 0:
@@ -377,7 +445,11 @@ def generate_report(
                 y -= 16
             c.line(50, y, width - 50, y)
 
+    # =========================================================================
     # STRONA: WYKRES
+    # Wstawia obraz wykresu wygenerowanego w zakładce Wizualizacja.
+    # Wykres przekazywany jest jako bufor BytesIO (plot_buf).
+    # =========================================================================
     if plot_buf is not None:
         c.showPage()
         page_num += 1
@@ -392,7 +464,12 @@ def generate_report(
         img = ImageReader(plot_buf)
         c.drawImage(img, 50, 100, width - 100, height - 220, preserveAspectRatio=True)
 
+    # =========================================================================
     # STRONA: WNIOSKI
+    # Automatycznie generowane wnioski na podstawie danych i filtrów.
+    # Każdy wniosek poprzedzony punktorrem "•".
+    # Na końcu strony stopka z dokładną datą i godziną generowania raportu.
+    # =========================================================================
     c.showPage()
     page_num += 1
     _draw_page_header(c, width, height, font, page_num)
@@ -415,9 +492,11 @@ def generate_report(
         y = _wrap_text(c, f"• {conclusion}", 50, y, font, 11, width - 100, 18)
         y -= 6
 
+    # Stopka końcowa z dokładnym znacznikiem czasu
     c.setFont(font, 9)
     c.setFillColorRGB(0.5, 0.5, 0.5)
     c.drawCentredString(width / 2, 50,
         f"Raport wygenerowany: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
 
+    # --- ZAPIS PLIKU PDF ---
     c.save()
