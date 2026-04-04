@@ -467,6 +467,134 @@ class AnalizatorCSV(QMainWindow):
         vbox_thresh.addWidget(self.threshold_result)
 
         self.tabs.addTab(self.tab_threshold, "Analiza progów")
+        # =====================================================================
+        # ZAKŁADKA 5: POMOC
+        # Wyświetla tekst z opisem wszystkich zakładek i funkcji aplikacji.
+        # =====================================================================
+        self.tab_help = QWidget()
+        vbox_help = QVBoxLayout(self.tab_help)
+
+        help_text = QTextEdit()
+        help_text.setReadOnly(True)
+        help_text.setFont(QFont("Segoe UI", 10))
+        help_text.setStyleSheet("QTextEdit { padding: 12px; }")
+
+        help_content = """
+        ANALIZATOR DANYCH PACJENTÓW — POMOC
+        ━━━━━━━━━━━━━━━━━━
+        Witaj w programie Analizator Danych Pacjentów!
+        Cieszę się, że wybrałeś akurat ten program! 
+        Mam nadzieję, że działa poprawnie, chociaż nic nie obiecuję! 
+        Poniżej krótki poradnik dla użytkownika:        
+
+        WCZYTYWANIE DANYCH
+        ──────────────────
+        • Plik CSV / Excel — kliknij „Wczytaj plik" lub użyj menu Plik.
+          Separator i kodowanie wykrywane są automatycznie (obsługa UTF-8,
+          ISO-8859-2, CP1250).
+        • Baza SQLite — kliknij „Wczytaj z bazy SQL", wybierz plik .db,
+          a następnie wskaż tabelę z listy dostępnych tabel.
+
+        ZAKŁADKI APLIKACJI
+        ──────────────────
+
+        PODGLĄD DANYCH
+          Wyświetla wczytane dane w tabeli. Po zastosowaniu filtrów pokazuje
+          tylko przefiltrowane rekordy. Liczba widocznych rekordów widoczna
+          jest w nagłówku zakładki.
+
+        FILTRY
+          Budowanie warunków filtrowania krok po kroku:
+          1. Wybierz kolumnę z listy.
+          2. Wybierz operator: =  >  <  >=  <=  zawiera  nie zawiera
+          3. Podaj wartość (dla kolumn tekstowych pojawi się lista rozwijana).
+          4. Kliknij „Dodaj warunek" — warunek pojawi się na liście aktywnych.
+          5. Powtórz dla kolejnych warunków.
+          6. Wybierz logikę łączenia: AND (wszystkie warunki muszą być spełnione)
+             lub OR (wystarczy jeden).
+          7. Kliknij „Zastosuj filtry".
+
+          Wskazówka: pojedynczy zaznaczony warunek można usunąć przyciskiem
+          „Usuń zaznaczony". „Wyczyść filtry" usuwa wszystkie naraz.
+
+        STATYSTYKI
+          Obliczanie metryk dla wybranych kolumn:
+          1. Wybierz zakres: Przefiltrowane lub Całe dane.
+          2. Zaznacz kolumny checkboxami.
+          3. Opcjonalnie wybierz kolumnę grupowania (np. płeć, typ ubezpieczenia).
+          4. Zaznacz metryki: count / mean / median / min / max / std.
+          5. Kliknij „Oblicz statystyki".
+
+          Kolumny numeryczne — wyświetlają pełne statystyki.
+          Kolumny tekstowe  — wyświetlają liczbę unikalnych wartości
+                              oraz najczęstsze wystąpienia.
+
+        WIZUALIZACJA
+          Tworzenie wykresów:
+          1. Wybierz kolumnę X (obowiązkowa).
+          2. Wybierz kolumnę Y (opcjonalna — wymagana dla scatter/box/liniowy).
+          3. Wybierz typ wykresu lub pozostaw „Auto" (dobór automatyczny):
+             • Histogram      — jedna kolumna numeryczna
+             • Bar chart      — jedna kolumna tekstowa
+             • Box plot       — tekst (X) + liczba (Y)
+             • Wykres rozrzutu— liczba (X) + liczba (Y), próbka do 5000 pkt
+             • Wykres liniowy — data (X) + liczba (Y)
+          4. Opcjonalnie zaznacz „Ustaw zakres osi Y ręcznie" i podaj Min/Max.
+          5. Kliknij „Rysuj wykres".
+          6. Przycisk „Powiększ wykres" otwiera wykres w osobnym oknie
+             z paskiem narzędzi matplotlib (zoom, zapis PNG).
+
+        ANALIZA PROGÓW
+          Sprawdza jak zmiana wartości progowej filtra wpływa na liczbę
+          rekordów i średnie kolumn numerycznych:
+          1. Wybierz kolumnę filtrowaną (np. age, bmi).
+          2. Wybierz operator (>, >=, <, <=).
+          3. Wpisz wartości progowe oddzielone przecinkami, np.: 40,50,60,70
+          4. Zaznacz kolumny do analizy.
+          5. Kliknij „Uruchom analizę progów".
+
+        EKSPORT
+        ───────
+        • Eksport CSV  — zapisuje przefiltrowane dane do pliku .csv
+                         (separator: średnik).
+        • Eksport PDF  — generuje raport zawierający:
+                         stronę tytułową, metodologię, statystyki,
+                         wykres (jeśli wygenerowany) oraz automatyczne wnioski.
+
+        ANALIZA WPŁYWU FILTRÓW
+        ──────────────────────
+        Przycisk „Analiza wpływu filtrów" (panel boczny) porównuje dane
+        przed i po filtracji — pokazuje procentowy ubytek rekordów oraz
+        zmiany średnich i median dla kolumn numerycznych.
+        Wyniki można wyeksportować do pliku .txt.
+
+        BAZA DANYCH SQLite
+        ──────────────────
+        Projekt zawiera skrypt csv_to_sqlite.py do jednorazowej konwersji
+        plików CSV do bazy danych:
+
+          python csv_to_sqlite.py --input_dir ./dane --output baza.db
+
+        Baza zawiera 5 tabel połączonych przez patient_id:
+          patients (100k) · medications (364k) · outcomes (11k)
+          diagnoses (274k) · lab_results (2,8M)
+
+        SKRÓTY I WSKAZÓWKI
+        ──────────────────
+        • Logi działań aplikacji widoczne są w panelu na dole okna.
+        • Przy dużych zbiorach danych wczytywanie odbywa się w tle —
+          aplikacja pozostaje responsywna.
+        • Scatter plot automatycznie próbkuje dane do 5000 punktów
+          przy bardzo dużych zbiorach.
+        • Wartości liczbowe można wpisywać z przecinkiem lub kropką
+          jako separatorem dziesiętnym.
+          
+          Miłego korzystania z programu!
+        """
+
+        help_text.setPlainText(help_content.strip())
+        vbox_help.addWidget(help_text)
+        self.tabs.addTab(self.tab_help, "❓ Pomoc")
 
         # --- PANEL LOGÓW ---
         # Wyświetla chronologiczny dziennik działań użytkownika i zdarzeń systemowych.
