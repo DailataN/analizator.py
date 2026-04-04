@@ -120,6 +120,7 @@ class AnalizatorCSV(QMainWindow):
         self.btn_filter = QPushButton("⚙️ Filtry")
         self.btn_stats = QPushButton("📊 Statystyki")
         self.btn_plot = QPushButton("📈 Wizualizacja")
+        self.btn_threshold = QPushButton("🔬 Analiza progów")
         self.btn_compare = QPushButton("📉 Analiza wpływu filtrów")
         self.btn_export_csv = QPushButton("💾 Eksport CSV")
         self.btn_export_pdf = QPushButton("🧾 Eksport PDF")
@@ -130,6 +131,7 @@ class AnalizatorCSV(QMainWindow):
             self.btn_filter,
             self.btn_stats,
             self.btn_plot,
+            self.btn_threshold,
             self.btn_compare,
             self.btn_export_csv,
             self.btn_export_pdf
@@ -342,6 +344,42 @@ class AnalizatorCSV(QMainWindow):
 
         self.tabs.addTab(self.tab_plot, "Wizualizacja")
 
+        # ANALIZA PROGÓW
+        self.tab_threshold = QWidget()
+        vbox_thresh = QVBoxLayout(self.tab_threshold)
+
+        vbox_thresh.addWidget(QLabel("Kolumna filtrowana (próg):"))
+        self.combo_thresh_col = QComboBox()
+        vbox_thresh.addWidget(self.combo_thresh_col)
+
+        thresh_op_row = QHBoxLayout()
+        thresh_op_row.addWidget(QLabel("Operator:"))
+        self.combo_thresh_op = QComboBox()
+        self.combo_thresh_op.addItems([">", ">=", "<", "<="])
+        thresh_op_row.addWidget(self.combo_thresh_op)
+        vbox_thresh.addLayout(thresh_op_row)
+
+        vbox_thresh.addWidget(QLabel("Wartości progowe (oddzielone przecinkami, np. 40,50,60,70):"))
+        self.input_thresholds = QLineEdit()
+        self.input_thresholds.setPlaceholderText("np. 40,50,60,70,80")
+        vbox_thresh.addWidget(self.input_thresholds)
+
+        vbox_thresh.addWidget(QLabel("Kolumny do analizy (zaznacz):"))
+        self.list_thresh_cols = QListWidget()
+        self.list_thresh_cols.setSelectionMode(QListWidget.MultiSelection)
+        self.list_thresh_cols.setMaximumHeight(120)
+        vbox_thresh.addWidget(self.list_thresh_cols)
+
+        self.btn_run_threshold = QPushButton("▶ Uruchom analizę progów")
+        vbox_thresh.addWidget(self.btn_run_threshold)
+
+        self.threshold_result = QTextEdit()
+        self.threshold_result.setReadOnly(True)
+        self.threshold_result.setFont(QFont("Courier New", 9))
+        vbox_thresh.addWidget(self.threshold_result)
+
+        self.tabs.addTab(self.tab_threshold, "Analiza progów")
+
         # LOGI
         logs_frame = QFrame()
         logs_layout = QVBoxLayout(logs_frame)
@@ -361,6 +399,8 @@ class AnalizatorCSV(QMainWindow):
         self.btn_stats.clicked.connect(lambda: self.tabs.setCurrentIndex(2))
         self.btn_plot.clicked.connect(lambda: self.tabs.setCurrentIndex(3))
         self.btn_compare.clicked.connect(self.compare_filters)
+        self.btn_threshold.clicked.connect(lambda: self.tabs.setCurrentIndex(4))
+        self.btn_run_threshold.clicked.connect(self.run_threshold_analysis)
         self.btn_export_pdf.clicked.connect(self.export_pdf)
         self.btn_export_csv.clicked.connect(self.export_csv)
         self.btn_add_condition.clicked.connect(self.add_condition)
@@ -426,6 +466,13 @@ class AnalizatorCSV(QMainWindow):
         self.stats_text.clear()
         self._clear_plot_area()
         self.plot_info_label.setText("Brak danych do wizualizacji.")
+
+        self.combo_thresh_col.clear()
+        self.combo_thresh_col.addItems([str(col) for col in self.df.columns])
+        self.list_thresh_cols.clear()
+        for col in self.df.columns:
+            item = QListWidgetItem(str(col))
+            self.list_thresh_cols.addItem(item)
 
     # WCZYTYWANIE PLIKU
     def load_file(self):
@@ -907,6 +954,89 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.information(self, "Sukces", f"Zapisano:\n{filename}")
         except Exception as e:
             QMessageBox.warning(self, "Błąd", str(e))
+
+    def run_threshold_analysis(self):
+        if self.df is None:
+            QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj dane.")
+            return
+
+        col_filter = self.combo_thresh_col.currentText()
+        op = self.combo_thresh_op.currentText()
+
+        raw = self.input_thresholds.text().strip()
+        if not raw:
+            QMessageBox.warning(self, "Brak progów", "Wprowadź wartości progowe.")
+            return
+
+        try:
+            thresholds = [float(v.replace(",", ".").strip()) for v in raw.split(",")]
+        except ValueError:
+            QMessageBox.warning(self, "Błąd",
+                "Nieprawidłowe wartości progowe — wpisz liczby oddzielone przecinkami.")
+            return
+
+        selected_cols = [
+            self.list_thresh_cols.item(i).text()
+            for i in range(self.list_thresh_cols.count())
+            if self.list_thresh_cols.item(i).isSelected()
+        ]
+        if not selected_cols:
+            QMessageBox.warning(self, "Brak kolumn",
+                "Zaznacz co najmniej jedną kolumnę do analizy.")
+            return
+
+        num_cols = [
+            c for c in selected_cols
+            if pd.api.types.is_numeric_dtype(self.df[c]) or
+               pd.to_numeric(self.df[c], errors="coerce").notna().mean() > 0.5
+        ]
+        if not num_cols:
+            QMessageBox.warning(self, "Błąd",
+                "Zaznaczone kolumny nie zawierają danych numerycznych.")
+            return
+
+        col_series = pd.to_numeric(self.df[col_filter], errors="coerce")
+        total = len(self.df)
+
+        lines = []
+        lines.append(f"ANALIZA WPLYWU PROGU: {col_filter} {op} X")
+        lines.append(f"Kolumny analizowane: {', '.join(num_cols)}")
+        lines.append("=" * 70)
+        header = f"{'Prog':<10} {'N rekordow':<14} {'% zbioru':<12}"
+        header += "".join(f"{c[:12]:<14}" for c in num_cols)
+        lines.append(header)
+        lines.append("-" * 70)
+
+        for thresh in sorted(thresholds):
+            if op == ">":
+                mask = col_series > thresh
+            elif op == ">=":
+                mask = col_series >= thresh
+            elif op == "<":
+                mask = col_series < thresh
+            else:
+                mask = col_series <= thresh
+
+            subset = self.df.loc[mask.fillna(False)]
+            n = len(subset)
+            pct = n / total * 100 if total > 0 else 0
+
+            means = []
+            for c in num_cols:
+                s = pd.to_numeric(subset[c], errors="coerce").dropna()
+                means.append(f"{s.mean():.2f}" if len(s) > 0 else "N/A")
+
+            line = f"{thresh:<10.1f} {n:<14,} {pct:<12.1f}"
+            line += "".join(f"{m:<14}" for m in means)
+            lines.append(line)
+
+        lines.append("-" * 70)
+        lines.append("")
+        lines.append("Interpretacja: tabela pokazuje jak zmiana progu wplywu")
+        lines.append("na liczbe rekordow i srednie wartosci wybranych kolumn.")
+
+        self.threshold_result.setPlainText("\n".join(lines))
+        self.log(f"Analiza progow: {col_filter} {op} {thresholds}")
 
     # EKSPORT CSV
     def export_csv(self):
