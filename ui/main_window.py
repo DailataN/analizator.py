@@ -1,4 +1,6 @@
-# IMPORT BIBLIOTEK
+# =============================================================================
+# IMPORT BIBLIOTEK — MODUŁY WEWNĘTRZNE
+# =============================================================================
 from ui.table_model import DataFrameTableModel
 from data.loader import load_csv_file, load_excel_file
 from data.validator import validate_dataframe
@@ -7,6 +9,9 @@ from data.database import load_table_from_db
 from analysis.stats import calculate_selected_stats, compare_filter_impact, analyze_filter_impact
 from analysis.visualization import create_plot
 
+# =============================================================================
+# IMPORT BIBLIOTEK — BIBLIOTEKI ZEWNĘTRZNE
+# =============================================================================
 import io
 import pandas as pd
 import sqlite3
@@ -16,7 +21,9 @@ import matplotlib.pyplot as plt
 
 from datetime import datetime
 
-# NARZĘDZIA GUI
+# =============================================================================
+# IMPORT BIBLIOTEK — NARZĘDZIA GUI (PyQt5)
+# =============================================================================
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTabWidget, QTextEdit, QFrame, QSplitter, QFileDialog, QLineEdit,
@@ -28,7 +35,15 @@ from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# WĄTEK DO WCZYTYWANIA PLIKÓW
+
+# =============================================================================
+# WĄTEK DO WCZYTYWANIA PLIKÓW (QThread)
+# Wczytywanie plików odbywa się w osobnym wątku, dzięki czemu GUI nie
+# zamraża się podczas ładowania dużych zbiorów danych.
+# Emituje sygnały: progress (komunikat tekstowy), finished (df + błędy),
+# error (komunikat błędu).
+# Pipeline wątku: wczytanie → walidacja → czyszczenie → emit finished.
+# =============================================================================
 class FileLoaderThread(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -64,8 +79,24 @@ class FileLoaderThread(QThread):
             self.error.emit(str(e))
 
 
+# =============================================================================
 # GŁÓWNE OKNO APLIKACJI
+# Klasa AnalizatorCSV dziedziczy po QMainWindow i stanowi centralny punkt
+# całej aplikacji. Zarządza stanem danych (df, df_filtered), układem GUI,
+# zakładkami oraz logiką wszystkich funkcji analitycznych.
+# =============================================================================
 class AnalizatorCSV(QMainWindow):
+
+    # -------------------------------------------------------------------------
+    # INICJALIZACJA OKNA
+    # Ustawia tytuł, rozmiar i inicjalizuje wszystkie zmienne stanu:
+    #   df            — surowe dane po wczytaniu
+    #   df_filtered   — dane po zastosowaniu filtrów
+    #   last_fig      — ostatnia figura matplotlib (do powiększenia/eksportu)
+    #   canvas        — widget wykresu osadzony w zakładce
+    #   filters       — lista aktywnych warunków filtrowania
+    #   loader_thread — referencja do wątku wczytywania
+    # -------------------------------------------------------------------------
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Analizator danych pacjentów")
@@ -80,8 +111,20 @@ class AnalizatorCSV(QMainWindow):
 
         self.initUI()
 
+    # =========================================================================
+    # BUDOWANIE INTERFEJSU UŻYTKOWNIKA
+    # Metoda initUI() tworzy cały układ graficzny aplikacji:
+    #   - pasek menu
+    #   - panel boczny z przyciskami
+    #   - zakładki: Podgląd, Filtry, Statystyki, Wizualizacja, Analiza progów
+    #   - panel logów na dole okna
+    #   - połączenia sygnałów z metodami (slots)
+    # =========================================================================
     def initUI(self):
-        # MENU
+
+        # --- PASEK MENU ---
+        # Menu "Plik": wczytaj plik, wyjście
+        # Menu "Eksport": eksport PDF i CSV
         menubar = self.menuBar()
 
         menu_plik = menubar.addMenu("Plik")
@@ -104,14 +147,16 @@ class AnalizatorCSV(QMainWindow):
         action_csv.triggered.connect(self.export_csv)
         menu_eksport.addAction(action_csv)
 
-        # CENTRALNY UKŁAD
+        # --- CENTRALNY UKŁAD OKNA ---
+        # Splitter poziomy dzieli okno na panel boczny (przyciski) i zakładki.
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # PANEL BOCZNY
+        # --- PANEL BOCZNY Z PRZYCISKAMI NAWIGACJI ---
+        # Każdy przycisk odpowiada jednej funkcji lub zakładce aplikacji.
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
 
@@ -142,11 +187,16 @@ class AnalizatorCSV(QMainWindow):
         panel_layout.addStretch()
         splitter.addWidget(panel)
 
-        # ZAKŁADKI
+        # --- WIDGET ZAKŁADEK ---
         self.tabs = QTabWidget()
         splitter.addWidget(self.tabs)
 
-        # PODGLĄD DANYCH
+        # =====================================================================
+        # ZAKŁADKA 0: PODGLĄD DANYCH
+        # Wyświetla wczytane dane w tabeli (QTableView z modelem DataFrameTableModel).
+        # Etykieta pokazuje liczbę aktualnie wyświetlanych rekordów.
+        # Włączone naprzemienne kolorowanie wierszy i ukryty nagłówek pionowy.
+        # =====================================================================
         self.tab_data = QWidget()
         vbox_data = QVBoxLayout(self.tab_data)
 
@@ -166,7 +216,13 @@ class AnalizatorCSV(QMainWindow):
         vbox_data.addWidget(self.table)
         self.tabs.addTab(self.tab_data, "Podgląd danych")
 
-        # FILTRY
+        # =====================================================================
+        # ZAKŁADKA 1: FILTRY
+        # Pozwala budować warunki filtrowania w trybie AND/OR.
+        # Dla kolumn tekstowych wyświetla listę rozwijaną z unikalnymi wartościami
+        # (max 500). Dla kolumn numerycznych — pole tekstowe.
+        # Warunki mogą być dodawane i usuwane pojedynczo.
+        # =====================================================================
         self.tab_filter = QWidget()
         vbox_filter = QVBoxLayout(self.tab_filter)
 
@@ -182,14 +238,17 @@ class AnalizatorCSV(QMainWindow):
         self.filter_value_label = QLabel("Wartość:")
         vbox_filter.addWidget(self.filter_value_label)
 
+        # Pole tekstowe dla wartości numerycznych
         self.input_value = QLineEdit()
         self.input_value.setPlaceholderText("np. 50 lub 5,5")
         vbox_filter.addWidget(self.input_value)
 
+        # Lista rozwijana dla wartości tekstowych (widoczna warunkowo)
         self.combo_value = QComboBox()
         self.combo_value.setVisible(False)
         vbox_filter.addWidget(self.combo_value)
 
+        # Przyciski dodawania i usuwania warunków
         btn_condition_row = QHBoxLayout()
         self.btn_add_condition = QPushButton("Dodaj warunek")
         self.btn_remove_condition = QPushButton("Usuń zaznaczony")
@@ -198,10 +257,12 @@ class AnalizatorCSV(QMainWindow):
         btn_condition_row.addWidget(self.btn_remove_condition)
         vbox_filter.addLayout(btn_condition_row)
 
+        # Lista aktywnych warunków
         vbox_filter.addWidget(QLabel("Aktywne warunki:"))
         self.list_filters = QListWidget()
         vbox_filter.addWidget(self.list_filters)
 
+        # Wybór logiki łączenia warunków: AND / OR
         hbox_logic = QHBoxLayout()
         hbox_logic.addWidget(QLabel("Łącz warunki za pomocą:"))
 
@@ -217,6 +278,7 @@ class AnalizatorCSV(QMainWindow):
         hbox_logic.addWidget(self.radio_or)
         vbox_filter.addLayout(hbox_logic)
 
+        # Przyciski zastosowania i czyszczenia filtrów
         self.btn_apply_filters = QPushButton("Zastosuj filtry")
         self.btn_clear_filters = QPushButton("Wyczyść filtry")
 
@@ -228,10 +290,16 @@ class AnalizatorCSV(QMainWindow):
         vbox_filter.addStretch()
         self.tabs.addTab(self.tab_filter, "Filtry")
 
-        # STATYSTYKI
+        # =====================================================================
+        # ZAKŁADKA 2: STATYSTYKI
+        # Umożliwia obliczenie wybranych metryk (count/mean/median/min/max/std)
+        # dla zaznaczonych kolumn, z opcjonalnym grupowaniem po kolumnie.
+        # Zakres danych: przefiltrowane lub całe.
+        # =====================================================================
         self.tab_stats = QWidget()
         vbox_stats = QVBoxLayout(self.tab_stats)
 
+        # Wybór zakresu danych: przefiltrowane / całe
         src_box = QHBoxLayout()
         src_box.addWidget(QLabel("Zakres danych:"))
 
@@ -247,17 +315,20 @@ class AnalizatorCSV(QMainWindow):
         src_box.addWidget(self.radio_scope_all)
         vbox_stats.addLayout(src_box)
 
+        # Lista kolumn z checkboxami (MultiSelection)
         vbox_stats.addWidget(QLabel("Kolumny do analizy (zaznacz co chcesz):"))
         self.list_cols = QListWidget()
         self.list_cols.setSelectionMode(QListWidget.MultiSelection)
         vbox_stats.addWidget(self.list_cols)
 
+        # Grupowanie wyników po wybranej kolumnie
         grp = QHBoxLayout()
         grp.addWidget(QLabel("Grupuj wg (opcjonalnie):"))
         self.combo_groupby = QComboBox()
         grp.addWidget(self.combo_groupby)
         vbox_stats.addLayout(grp)
 
+        # Checkboxy wyboru metryk — domyślnie zaznaczone: count, mean, median, min, max
         vbox_stats.addWidget(QLabel("Metryki:"))
         self.chk_count = QCheckBox("Liczność (count)")
         self.chk_mean = QCheckBox("Średnia (mean)")
@@ -277,13 +348,20 @@ class AnalizatorCSV(QMainWindow):
         self.btn_compute_stats = QPushButton("Oblicz statystyki")
         vbox_stats.addWidget(self.btn_compute_stats)
 
+        # Pole wynikowe (tylko do odczytu)
         self.stats_text = QTextEdit()
         self.stats_text.setReadOnly(True)
         vbox_stats.addWidget(self.stats_text)
 
         self.tabs.addTab(self.tab_stats, "Statystyki")
 
-        # WIZUALIZACJA
+        # =====================================================================
+        # ZAKŁADKA 3: WIZUALIZACJA
+        # Umożliwia wybór kolumn X i Y, typu wykresu oraz opcjonalnego
+        # zakresu osi Y. Wykres jest osadzany jako FigureCanvas w zakładce.
+        # Przycisk powiększenia otwiera wykres w osobnym oknie dialogowym
+        # z paskiem narzędzi matplotlib.
+        # =====================================================================
         self.tab_plot = QWidget()
         vbox_plot = QVBoxLayout(self.tab_plot)
 
@@ -307,6 +385,7 @@ class AnalizatorCSV(QMainWindow):
         ])
         vbox_plot.addWidget(self.combo_chart_type)
 
+        # Przyciski rysowania i powiększenia wykresu
         btn_row = QHBoxLayout()
         self.btn_draw_plot = QPushButton("Rysuj wykres")
         self.btn_fullscreen = QPushButton("🔍 Powiększ wykres")
@@ -315,6 +394,7 @@ class AnalizatorCSV(QMainWindow):
         btn_row.addWidget(self.btn_fullscreen)
         vbox_plot.addLayout(btn_row)
 
+        # Opcjonalne ręczne ustawienie zakresu osi Y
         self.chk_yrange = QCheckBox("Ustaw zakres osi Y ręcznie")
         vbox_plot.addWidget(self.chk_yrange)
 
@@ -331,12 +411,14 @@ class AnalizatorCSV(QMainWindow):
         yrange_box.addWidget(self.input_ymax)
         vbox_plot.addLayout(yrange_box)
 
+        # Checkbox zakresu Y włącza/wyłącza pola Min i Max
         self.chk_yrange.toggled.connect(self.input_ymin.setEnabled)
         self.chk_yrange.toggled.connect(self.input_ymax.setEnabled)
 
         self.plot_info_label = QLabel("Brak danych do wizualizacji.")
         vbox_plot.addWidget(self.plot_info_label)
 
+        # Kontener na osadzony wykres matplotlib
         self.plot_container = QWidget()
         self.plot_container_layout = QVBoxLayout(self.plot_container)
         self.plot_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -344,7 +426,12 @@ class AnalizatorCSV(QMainWindow):
 
         self.tabs.addTab(self.tab_plot, "Wizualizacja")
 
-        # ANALIZA PROGÓW
+        # =====================================================================
+        # ZAKŁADKA 4: ANALIZA PROGÓW
+        # Pozwala zbadać jak zmiana wartości progowej filtra wpływa na liczbę
+        # rekordów i średnie wartości wybranych kolumn numerycznych.
+        # Użytkownik podaje kolumnę, operator i listę progów oddzielonych przecinkami.
+        # =====================================================================
         self.tab_threshold = QWidget()
         vbox_thresh = QVBoxLayout(self.tab_threshold)
 
@@ -373,6 +460,7 @@ class AnalizatorCSV(QMainWindow):
         self.btn_run_threshold = QPushButton("▶ Uruchom analizę progów")
         vbox_thresh.addWidget(self.btn_run_threshold)
 
+        # Pole wynikowe w czcionce monospacowej dla wyrównania tabeli
         self.threshold_result = QTextEdit()
         self.threshold_result.setReadOnly(True)
         self.threshold_result.setFont(QFont("Courier New", 9))
@@ -380,7 +468,8 @@ class AnalizatorCSV(QMainWindow):
 
         self.tabs.addTab(self.tab_threshold, "Analiza progów")
 
-        # LOGI
+        # --- PANEL LOGÓW ---
+        # Wyświetla chronologiczny dziennik działań użytkownika i zdarzeń systemowych.
         logs_frame = QFrame()
         logs_layout = QVBoxLayout(logs_frame)
         logs_layout.addWidget(QLabel("Logi:"))
@@ -392,7 +481,10 @@ class AnalizatorCSV(QMainWindow):
         main_layout.addWidget(splitter)
         main_layout.addWidget(logs_frame)
 
-        # POŁĄCZENIA
+        # =====================================================================
+        # POŁĄCZENIA SYGNAŁÓW I SLOTÓW
+        # Każdy przycisk i widget interaktywny jest połączony z odpowiednią metodą.
+        # =====================================================================
         self.btn_load.clicked.connect(self.load_file)
         self.btn_load_sql.clicked.connect(self.load_sql)
         self.btn_filter.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
@@ -416,12 +508,23 @@ class AnalizatorCSV(QMainWindow):
         self.btn_fullscreen.clicked.connect(self.open_fullscreen_plot)
         self.combo_col.currentTextChanged.connect(self._update_value_widget)
 
+    # =========================================================================
+    # METODY POMOCNICZE OKNA
+    # =========================================================================
+
+    # --- LOGGER ---
+    # Dopisuje komunikat do panelu logów z prefiksem ">".
     def log(self, msg):
         self.logs.append(f"> {msg}")
 
+    # --- PARSOWANIE WARTOŚCI LICZBOWEJ ---
+    # Zamienia przecinek na kropkę przed konwersją — obsługa polskiego formatu.
     def _parse_numeric_value(self, value_text):
         return float(value_text.replace(",", "."))
 
+    # --- CZYSZCZENIE OBSZARU WYKRESU ---
+    # Zamyka poprzednią figurę matplotlib (zapobiega wyciekowi pamięci),
+    # usuwa wszystkie widgety z kontenera wykresu i resetuje referencje.
     def _clear_plot_area(self):
         if self.last_fig is not None:
             plt.close(self.last_fig)
@@ -433,6 +536,9 @@ class AnalizatorCSV(QMainWindow):
                 widget.setParent(None)
         self.canvas = None
 
+    # --- ODŚWIEŻANIE UI PO WCZYTANIU DANYCH ---
+    # Wypełnia wszystkie ComboBox, listy kolumn i resetuje stan filtrów
+    # po każdorazowym wczytaniu nowego zbioru danych.
     def _refresh_ui_after_load(self):
         if self.df is None or self.df.empty:
             return
@@ -474,7 +580,10 @@ class AnalizatorCSV(QMainWindow):
             item = QListWidgetItem(str(col))
             self.list_thresh_cols.addItem(item)
 
-    # WCZYTYWANIE PLIKU
+    # =========================================================================
+    # WCZYTYWANIE PLIKU CSV / EXCEL
+    # Otwiera dialog wyboru pliku i uruchamia wątek FileLoaderThread.
+    # =========================================================================
     def load_file(self):
         filename, _ = QFileDialog.getOpenFileName(
             self, "Wybierz plik", "",
@@ -484,6 +593,12 @@ class AnalizatorCSV(QMainWindow):
             return
         self._start_loader(filename=filename)
 
+    # =========================================================================
+    # WCZYTYWANIE DANYCH Z BAZY SQLite
+    # Otwiera dialog wyboru pliku .db, pobiera listę tabel z bazy,
+    # wyświetla QInputDialog z listą tabel do wyboru,
+    # a następnie uruchamia wątek wczytywania dla wybranej tabeli.
+    # =========================================================================
     def load_sql(self):
         db_path, _ = QFileDialog.getOpenFileName(
             self, "Wybierz bazę danych", "",
@@ -507,7 +622,7 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Brak tabel", "Baza danych nie zawiera żadnych tabel.")
             return
 
-        # Pokaż listę tabel do wyboru bez znaku zapytania
+        # Dialog wyboru tabeli (bez znaku zapytania w tytule)
         dialog = QInputDialog(self)
         dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dialog.setWindowTitle("Wybierz tabelę")
@@ -522,6 +637,11 @@ class AnalizatorCSV(QMainWindow):
         self.current_db_path = db_path
         self._start_loader(db_path=db_path, table_name=table_name)
 
+    # =========================================================================
+    # URUCHAMIANIE WĄTKU WCZYTYWANIA
+    # Blokuje przyciski wczytywania, ustawia kursor oczekiwania
+    # i startuje FileLoaderThread z odpowiednimi parametrami.
+    # =========================================================================
     def _start_loader(self, filename=None, db_path=None, table_name=None):
         self.btn_load.setEnabled(False)
         self.btn_load_sql.setEnabled(False)
@@ -537,6 +657,9 @@ class AnalizatorCSV(QMainWindow):
         self.loader_thread.error.connect(self._on_load_error)
         self.loader_thread.start()
 
+    # --- CALLBACK: WCZYTYWANIE ZAKOŃCZONE SUKCESEM ---
+    # Przywraca kursor, odblokowuje przyciski, zapisuje df,
+    # wyświetla ostrzeżenia walidacji i odświeża cały interfejs.
     def _on_load_finished(self, result):
         QApplication.restoreOverrideCursor()
         self.btn_load.setEnabled(True)
@@ -556,6 +679,8 @@ class AnalizatorCSV(QMainWindow):
 
         self.tabs.setCurrentIndex(0)
 
+    # --- CALLBACK: WCZYTYWANIE ZAKOŃCZONE BŁĘDEM ---
+    # Przywraca kursor, odblokowuje przyciski i wyświetla komunikat błędu.
     def _on_load_error(self, error_msg):
         QApplication.restoreOverrideCursor()
         self.btn_load.setEnabled(True)
@@ -563,7 +688,11 @@ class AnalizatorCSV(QMainWindow):
         QMessageBox.warning(self, "Błąd wczytywania", error_msg)
         self.log(f"Błąd wczytywania: {error_msg}")
 
-    # TABLICA DANYCH
+    # =========================================================================
+    # TABLICA DANYCH — AKTUALIZACJA WIDOKU
+    # Przekazuje DataFrame do modelu tabeli z wyłączeniem odświeżania
+    # podczas aktualizacji (setUpdatesEnabled) dla lepszej wydajności.
+    # =========================================================================
     def update_table(self, df):
         if df is None or df.empty:
             self.table.setUpdatesEnabled(False)
@@ -579,6 +708,14 @@ class AnalizatorCSV(QMainWindow):
         self.preview_label.setText(f"Podgląd danych: {len(df)} rekordów")
         self.log(f"Załadowano do widoku: {len(df)} wierszy")
 
+    # =========================================================================
+    # DYNAMICZNE PRZEŁĄCZANIE WIDŻETU WARTOŚCI FILTRA
+    # Wywoływane przy zmianie wybranej kolumny w zakładce Filtry.
+    # Dla kolumn numerycznych: pokazuje pole tekstowe (input_value).
+    # Dla kolumn tekstowych: pokazuje ComboBox z unikalnymi wartościami.
+    # blockSignals(True) zapobiega wielokrotnemu wyzwalaniu sygnałów
+    # podczas wypełniania ComboBox.
+    # =========================================================================
     def _update_value_widget(self, col_name):
         if self.df is None or col_name not in self.df.columns:
             return
@@ -611,7 +748,14 @@ class AnalizatorCSV(QMainWindow):
             self.input_value.setVisible(False)
             self.filter_value_label.setText(label)
 
-    # FILTRY
+    # =========================================================================
+    # MODUŁ FILTRÓW
+    # =========================================================================
+
+    # --- DODAWANIE WARUNKU ---
+    # Odczytuje kolumnę, operator i wartość z widżetów.
+    # Dla operatorów porównawczych (>, <, >=, <=) sprawdza czy wartość jest liczbą.
+    # Dodaje warunek do listy self.filters i wyświetla go w list_filters.
     def add_condition(self):
         col = self.combo_col.currentText()
         op = self.combo_op.currentText()
@@ -641,6 +785,9 @@ class AnalizatorCSV(QMainWindow):
         self.input_value.clear()
         self.log(f"Dodano warunek: {col} {op} {val}")
 
+    # --- USUWANIE ZAZNACZONEGO WARUNKU ---
+    # Usuwa zaznaczone pozycje z listy GUI i z listy self.filters.
+    # Po usunięciu dezaktywuje przycisk "Usuń zaznaczony".
     def remove_condition(self):
         selected = self.list_filters.selectedItems()
         if not selected:
@@ -655,6 +802,9 @@ class AnalizatorCSV(QMainWindow):
 
         self.btn_remove_condition.setEnabled(False)
 
+    # --- CZYSZCZENIE WSZYSTKICH FILTRÓW ---
+    # Resetuje listę warunków, przywraca pełny DataFrame jako df_filtered
+    # i aktualizuje widok tabeli.
     def clear_filters(self):
         self.filters.clear()
         self.list_filters.clear()
@@ -668,6 +818,11 @@ class AnalizatorCSV(QMainWindow):
 
         self.log("Wyczyszczono wszystkie filtry.")
 
+    # --- ZASTOSOWANIE FILTRÓW ---
+    # Tworzy maski boolowskie dla każdego warunku, z cache'owaniem kolumn
+    # (col_cache) aby nie przeliczać tej samej kolumny wielokrotnie.
+    # Obsługiwane operatory: =, >, <, >=, <=, zawiera, nie zawiera.
+    # Maski łączone są operatorem AND lub OR zgodnie z wyborem użytkownika.
     def apply_filters(self):
         if self.df is None:
             QMessageBox.information(self, "Filtry", "Najpierw wczytaj dane.")
@@ -683,6 +838,7 @@ class AnalizatorCSV(QMainWindow):
         masks = []
         errors = []
 
+        # Cache kolumn: każda kolumna konwertowana raz (jako str i jako liczba)
         col_cache = {}
         for col, op, val in self.filters:
             if col not in col_cache:
@@ -693,6 +849,7 @@ class AnalizatorCSV(QMainWindow):
                 )
                 col_cache[col] = (series_str, series_num)
 
+        # Budowanie masek boolowskich dla każdego warunku
         for col, op, val in self.filters:
             series_str, series_num = col_cache[col]
             try:
@@ -741,6 +898,7 @@ class AnalizatorCSV(QMainWindow):
                 "Niektóre warunki nie zadziałały:\n" + "\n".join(errors)
             )
 
+        # Łączenie masek operatorem AND lub OR
         final_mask = masks[0]
         for m in masks[1:]:
             final_mask = (final_mask & m) if logic == "and" else (final_mask | m)
@@ -756,7 +914,11 @@ class AnalizatorCSV(QMainWindow):
             f"wyników: {len(self.df_filtered)} z {len(self.df)}"
         )
 
-    # STATYSTYKI
+    # =========================================================================
+    # MODUŁ STATYSTYK
+    # Zbiera zaznaczone kolumny i metryki, przekazuje do calculate_selected_stats
+    # i wyświetla wynik w polu stats_text.
+    # =========================================================================
     def compute_selected_stats(self):
         if self.df is None:
             QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj plik.")
@@ -798,7 +960,14 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Błąd statystyk", f"Nie udało się policzyć statystyk:\n{e}")
             self.log(f"Błąd statystyk: {e}")
 
-    # WYKRES
+    # =========================================================================
+    # MODUŁ WIZUALIZACJI
+    # =========================================================================
+
+    # --- RYSOWANIE WYKRESU ---
+    # Odczytuje parametry z zakładki Wizualizacja, opcjonalnie parsuje zakres Y,
+    # tworzy figurę przez create_plot() i osadza ją jako FigureCanvas w GUI.
+    # Bufor PNG wykresu zapisywany jest do self._plot_buf dla eksportu PDF.
     def show_plot(self):
         if self.df_filtered is None or self.df_filtered.empty:
             QMessageBox.warning(self, "Brak danych", "Brak danych do wizualizacji.")
@@ -856,6 +1025,9 @@ class AnalizatorCSV(QMainWindow):
             + (f" [Y: {y_min}–{y_max}]" if y_min is not None else "")
         )
 
+    # --- POWIĘKSZONY PODGLĄD WYKRESU ---
+    # Otwiera wykres w osobnym oknie QDialog z paskiem narzędzi matplotlib
+    # (NavigationToolbar2QT). Po zamknięciu rozłącza zdarzenia canvas.
     def open_fullscreen_plot(self):
         if self.last_fig is None:
             return
@@ -878,8 +1050,8 @@ class AnalizatorCSV(QMainWindow):
 
         dialog.exec_()
 
-        # Odłącz zdarzenia matplotlib po zamknięciu okna
-        # żeby uniknąć błędu QLabel has been deleted
+        # Odłączenie zdarzeń matplotlib po zamknięciu okna
+        # — zapobiega błędowi "QLabel has been deleted"
         try:
             canvas.mpl_disconnect_all()
         except Exception:
@@ -889,7 +1061,13 @@ class AnalizatorCSV(QMainWindow):
         except Exception:
             pass
 
+    # =========================================================================
     # ANALIZA WPŁYWU FILTRÓW
+    # Wywołuje compare_filter_impact (podstawowe porównanie rekordów)
+    # i analyze_filter_impact (szczegółowe porównanie średnich i median).
+    # Wyniki wyświetlane są w scrollowalnym oknie dialogowym z opcją
+    # eksportu do pliku TXT.
+    # =========================================================================
     def compare_filters(self):
         if self.df is None or self.df_filtered is None:
             QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj dane.")
@@ -900,14 +1078,14 @@ class AnalizatorCSV(QMainWindow):
             return
 
         try:
-            # Podstawowe porównanie rekordów
+            # Podstawowe porównanie liczby rekordów
             basic = compare_filter_impact(self.df, self.df_filtered)
 
-            # Szczegółowa analiza wpływu na statystyki
+            # Szczegółowa analiza wpływu filtrów na statystyki kolumn numerycznych
             numeric_cols = self.df.select_dtypes(include="number").columns.tolist()
             detailed = analyze_filter_impact(self.df, self.df_filtered, numeric_cols)
 
-            # Pokaż w osobnym oknie z możliwością scrollowania
+            # Okno dialogowe z wynikami
             dialog = QDialog(self)
             dialog.setWindowTitle("Analiza wpływu parametrów filtrowania")
             dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -939,6 +1117,8 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Błąd", str(e))
             self.log(f"Błąd analizy wpływu: {e}")
 
+    # --- EKSPORT ANALIZY DO PLIKU TXT ---
+    # Zapisuje wynik analizy wpływu filtrów do pliku tekstowego z timestampem.
     def _export_analysis_txt(self, content):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename, _ = QFileDialog.getSaveFileName(
@@ -955,6 +1135,12 @@ class AnalizatorCSV(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Błąd", str(e))
 
+    # =========================================================================
+    # ANALIZA PROGÓW
+    # Dla każdego progu z listy filtruje DataFrame według warunku
+    # (col_filter op thresh) i oblicza średnie wartości wybranych kolumn.
+    # Wyniki są formatowane jako tabela tekstowa w polu threshold_result.
+    # =========================================================================
     def run_threshold_analysis(self):
         if self.df is None:
             QMessageBox.warning(self, "Brak danych", "Najpierw wczytaj dane.")
@@ -985,6 +1171,7 @@ class AnalizatorCSV(QMainWindow):
                 "Zaznacz co najmniej jedną kolumnę do analizy.")
             return
 
+        # Filtrowanie tylko kolumn numerycznych spośród zaznaczonych
         num_cols = [
             c for c in selected_cols
             if pd.api.types.is_numeric_dtype(self.df[c]) or
@@ -998,6 +1185,7 @@ class AnalizatorCSV(QMainWindow):
         col_series = pd.to_numeric(self.df[col_filter], errors="coerce")
         total = len(self.df)
 
+        # Budowanie tabeli wynikowej
         lines = []
         lines.append(f"ANALIZA WPLYWU PROGU: {col_filter} {op} X")
         lines.append(f"Kolumny analizowane: {', '.join(num_cols)}")
@@ -1038,7 +1226,10 @@ class AnalizatorCSV(QMainWindow):
         self.threshold_result.setPlainText("\n".join(lines))
         self.log(f"Analiza progow: {col_filter} {op} {thresholds}")
 
+    # =========================================================================
     # EKSPORT CSV
+    # Zapisuje przefiltrowane dane do pliku CSV z separatorem średnika.
+    # =========================================================================
     def export_csv(self):
         if self.df_filtered is None or self.df_filtered.empty:
             QMessageBox.warning(self, "Brak danych", "Brak danych do eksportu.")
@@ -1061,9 +1252,16 @@ class AnalizatorCSV(QMainWindow):
             QMessageBox.warning(self, "Błąd CSV", f"Nie udało się zapisać pliku CSV:\n{e}")
             self.log(f"Błąd eksportu CSV: {e}")
 
-    # EKSPORT PDF
+    # =========================================================================
+    # EKSPORT PDF — GENEROWANIE RAPORTU (ReportLab Platypus)
+    # Buduje wielostronicowy dokument PDF przy użyciu ReportLab Platypus.
+    # Struktura raportu: strona tytułowa → metodologia → statystyki → wykres → wnioski.
+    # Import ReportLab jest opóźniony — nie blokuje startu aplikacji.
+    # Czcionka TTF rejestrowana dynamicznie dla obsługi polskich znaków.
+    # =========================================================================
     def export_pdf(self):
-        # Sprawdź czy są jakiekolwiek dane do raportu
+
+        # --- SPRAWDZENIE DOSTĘPNOŚCI DANYCH DO RAPORTU ---
         has_data = self.df_filtered is not None and not self.df_filtered.empty
         has_sql = hasattr(self, "sql_df") and self.sql_df is not None
 
@@ -1090,7 +1288,8 @@ class AnalizatorCSV(QMainWindow):
                                 "Zainstaluj: pip install reportlab")
             return
 
-        # Rejestracja czcionki
+        # --- REJESTRACJA CZCIONKI Z OBSŁUGĄ POLSKICH ZNAKÓW ---
+        # Próbuje zarejestrować czcionkę regularną i bold (arial/calibri/dejavu).
         font_paths = [
             "C:/Windows/Fonts/arial.ttf",
             "C:/Windows/Fonts/calibri.ttf",
@@ -1113,6 +1312,7 @@ class AnalizatorCSV(QMainWindow):
                 except Exception:
                     continue
 
+        # --- DIALOG ZAPISU PLIKU PDF ---
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"raport_{timestamp}.pdf"
         filename, _ = QFileDialog.getSaveFileName(
@@ -1130,7 +1330,7 @@ class AnalizatorCSV(QMainWindow):
                 leftMargin=2.5 * cm, rightMargin=2.5 * cm
             )
 
-            # Style
+            # --- DEFINICJA STYLÓW TEKSTU ---
             styles = getSampleStyleSheet()
             style_title = ParagraphStyle("Title",
                                          fontName=font_bold, fontSize=22,
@@ -1160,7 +1360,10 @@ class AnalizatorCSV(QMainWindow):
 
             story = []
 
-            # ── STRONA TYTUŁOWA ──────────────────────────────────────
+            # -----------------------------------------------------------------
+            # SEKCJA PDF: STRONA TYTUŁOWA
+            # Tytuł, podtytuł, data generowania, liczba rekordów i kolumn.
+            # -----------------------------------------------------------------
             story.append(Spacer(1, 3 * cm))
             story.append(Paragraph("Analizator Danych Pacjentów", style_title))
             story.append(Paragraph("Raport z analizy danych medycznych", style_subtitle))
@@ -1183,7 +1386,11 @@ class AnalizatorCSV(QMainWindow):
 
             story.append(PageBreak())
 
-            # ── METODOLOGIA ──────────────────────────────────────────
+            # -----------------------------------------------------------------
+            # SEKCJA PDF: METODOLOGIA
+            # Cel analizy i 8-krokowy pipeline przetwarzania danych.
+            # Jeśli aktywne filtry — wypisuje ich listę z logiką AND/OR.
+            # -----------------------------------------------------------------
             story.append(Paragraph("1. Cel i metodologia", style_h1))
             story.append(HRFlowable(width="100%", thickness=0.5,
                                     color=colors.HexColor("#d1d5db")))
@@ -1213,7 +1420,7 @@ class AnalizatorCSV(QMainWindow):
                 story.append(Paragraph(
                     f"<b>{step}:</b> {desc}", style_body))
 
-            # Aktywne filtry
+            # Lista aktywnych filtrów
             if self.filters:
                 story.append(Paragraph("Zastosowane filtry", style_h2))
                 logic = "AND" if self.radio_and.isChecked() else "OR"
@@ -1225,13 +1432,17 @@ class AnalizatorCSV(QMainWindow):
 
             story.append(PageBreak())
 
-            # ── STATYSTYKI ───────────────────────────────────────────
+            # -----------------------------------------------------------------
+            # SEKCJA PDF: STATYSTYKI
+            # Tekst z zakładki Statystyki + tabela describe() dla kolumn num.
+            # Wyniki SQL wyświetlane jako tabela (max 20 wierszy).
+            # -----------------------------------------------------------------
             story.append(Paragraph("2. Wyniki analizy statystycznej", style_h1))
             story.append(HRFlowable(width="100%", thickness=0.5,
                                     color=colors.HexColor("#d1d5db")))
             story.append(Spacer(1, 0.3 * cm))
 
-            # Statystyki z edytora
+            # Statystyki z edytora tekstowego zakładki Statystyki
             stats_text = self.stats_text.toPlainText()
             if stats_text:
                 story.append(Paragraph("Obliczone metryki", style_h2))
@@ -1240,7 +1451,7 @@ class AnalizatorCSV(QMainWindow):
                         story.append(Paragraph(line, style_mono))
                 story.append(Spacer(1, 0.3 * cm))
 
-            # Statystyki opisowe z pandas
+            # Tabela describe() dla kolumn numerycznych (dane przefiltrowane)
             if has_data:
                 story.append(Paragraph("Statystyki opisowe (dane przefiltrowane)", style_h2))
                 try:
@@ -1272,7 +1483,7 @@ class AnalizatorCSV(QMainWindow):
                 except Exception:
                     pass
 
-            # Wyniki SQL
+            # Tabela wyników SQL (max 20 wierszy)
             if has_sql:
                 story.append(Spacer(1, 0.5 * cm))
                 story.append(Paragraph("Wyniki zapytania SQL", style_h2))
@@ -1308,7 +1519,10 @@ class AnalizatorCSV(QMainWindow):
                 except Exception:
                     pass
 
-            # ── WYKRES ───────────────────────────────────────────────
+            # -----------------------------------------------------------------
+            # SEKCJA PDF: WYKRES
+            # Wstawia obraz z bufora self._plot_buf (jeśli wykres był wygenerowany).
+            # -----------------------------------------------------------------
             if hasattr(self, "_plot_buf") and self._plot_buf is not None:
                 story.append(PageBreak())
                 story.append(Paragraph("3. Wizualizacja danych", style_h1))
@@ -1323,14 +1537,17 @@ class AnalizatorCSV(QMainWindow):
                 except Exception:
                     pass
 
-            # ── WNIOSKI ──────────────────────────────────────────────
+            # -----------------------------------------------------------------
+            # SEKCJA PDF: WNIOSKI
+            # Automatycznie generowane wnioski na podstawie danych i filtrów:
+            # ubytki rekordów, braki danych, liczba kolumn, wyniki SQL.
+            # -----------------------------------------------------------------
             story.append(PageBreak())
             story.append(Paragraph("4. Wnioski", style_h1))
             story.append(HRFlowable(width="100%", thickness=0.5,
                                     color=colors.HexColor("#d1d5db")))
             story.append(Spacer(1, 0.3 * cm))
 
-            # Automatyczne wnioski na podstawie danych
             wnioski = []
 
             if has_data:
@@ -1342,7 +1559,7 @@ class AnalizatorCSV(QMainWindow):
                     f"{n_filt:,} rekordów ({pct:.1f}% zbioru wejściowego)."
                 )
 
-                # Braki danych
+                # Braki danych w kolumnach
                 missing = self.df_filtered.isnull().sum()
                 missing_cols = missing[missing > 0]
                 if len(missing_cols) > 0:
@@ -1353,7 +1570,7 @@ class AnalizatorCSV(QMainWindow):
                 else:
                     wnioski.append("Zbiór danych nie zawiera braków danych.")
 
-                # Kolumny numeryczne
+                # Liczba kolumn numerycznych i tekstowych
                 num_cols = self.df_filtered.select_dtypes(include="number").columns
                 if len(num_cols) > 0:
                     wnioski.append(
@@ -1377,6 +1594,7 @@ class AnalizatorCSV(QMainWindow):
             for w in wnioski:
                 story.append(Paragraph(f"• {w}", style_body))
 
+            # Stopka końcowa z datą i godziną generowania
             story.append(Spacer(1, 1 * cm))
             story.append(HRFlowable(width="100%", thickness=0.5,
                                     color=colors.HexColor("#d1d5db")))
@@ -1384,6 +1602,7 @@ class AnalizatorCSV(QMainWindow):
                 f"Raport wygenerowany: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",
                 style_subtitle))
 
+            # --- ZAPIS DOKUMENTU PDF ---
             doc.build(story)
 
             self.log(f"Zapisano raport: {filename}")
