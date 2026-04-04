@@ -1,10 +1,24 @@
+# =============================================================================
+# IMPORT BIBLIOTEK
+# =============================================================================
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+# =============================================================================
+# STAŁA KONFIGURACYJNA
+# Maksymalna liczba punktów na wykresie rozrzutu — powyżej tego progu
+# dane są losowo próbkowane, aby uniknąć spowolnienia renderowania.
+# =============================================================================
 SCATTER_MAX_POINTS = 5000
 
 
+# =============================================================================
+# FUNKCJA POMOCNICZA — AUTO-DETEKCJA TYPU KOLUMNY
+# Zwraca "numeric", "datetime" lub "text" na podstawie zawartości serii.
+# Kolumna jest uznawana za datetime jeśli ponad 50% wartości da się sparsować.
+# =============================================================================
 def _detect_type(series):
     if pd.api.types.is_numeric_dtype(series):
         return "numeric"
@@ -14,17 +28,35 @@ def _detect_type(series):
     return "text"
 
 
+# =============================================================================
+# FUNKCJA GŁÓWNA — TWORZENIE WYKRESU
+# Przyjmuje DataFrame oraz konfigurację osi i typu wykresu.
+# Jeśli chart_type="Auto", typ wykresu jest dobierany automatycznie
+# na podstawie wykrytych typów kolumn X i Y.
+# Zwraca obiekt Figure matplotlib oraz finalny typ wykresu.
+# =============================================================================
 def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None):
+
+    # --- WALIDACJA DANYCH WEJŚCIOWYCH ---
     if df is None or df.empty:
         raise ValueError("Brak danych do wizualizacji.")
     if not col_x:
         raise ValueError("Nie wybrano kolumny X.")
 
+    # --- USTALENIE CZY KOLUMNA Y JEST AKTYWNA ---
     has_y = col_y and col_y != "(brak)"
 
+    # --- WYKRYWANIE TYPÓW KOLUMN ---
     type_x = _detect_type(df[col_x])
     type_y = _detect_type(df[col_y]) if has_y else None
 
+    # --- AUTO-DOBÓR TYPU WYKRESU ---
+    # Logika doboru na podstawie kombinacji typów kolumn X i Y:
+    #   tekst + liczba  → Box plot
+    #   liczba + liczba → Wykres rozrzutu
+    #   data + liczba   → Wykres liniowy
+    #   liczba (bez Y)  → Histogram
+    #   tekst  (bez Y)  → Bar chart
     if chart_type == "Auto":
         if has_y:
             if type_x == "text" and type_y == "numeric":
@@ -41,10 +73,15 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
             else:
                 chart_type = "Bar chart"
 
+    # --- INICJALIZACJA FIGURY MATPLOTLIB ---
     plt.style.use("seaborn-v0_8")
     fig, ax = plt.subplots(figsize=(9, 5))
 
-    # HISTOGRAM
+    # -------------------------------------------------------------------------
+    # WYKRES: HISTOGRAM
+    # Rysowany dla pojedynczej kolumny numerycznej.
+    # Liczba przedziałów (bins) dobierana dynamicznie — min 10, max 50.
+    # -------------------------------------------------------------------------
     if chart_type == "Histogram":
         x = pd.to_numeric(df[col_x], errors="coerce").dropna()
         if x.empty:
@@ -55,7 +92,11 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         ax.set_xlabel(col_x)
         ax.set_ylabel("Liczba wystąpień")
 
-    # BAR CHART
+    # -------------------------------------------------------------------------
+    # WYKRES: BAR CHART
+    # Rysowany dla kolumny tekstowej/kategorycznej bez osi Y.
+    # Pokazuje top 20 najczęstszych wartości.
+    # -------------------------------------------------------------------------
     elif chart_type == "Bar chart":
         counts = df[col_x].value_counts().head(20)
         if counts.empty:
@@ -67,7 +108,13 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         ax.set_ylabel("Liczba")
         ax.tick_params(axis="x", rotation=45)
 
-    # BOX PLOT ze strip plotem
+    # -------------------------------------------------------------------------
+    # WYKRES: BOX PLOT + STRIP PLOT (violin zastąpiony podejściem hybrydowym)
+    # Domyślny typ dla kombinacji tekst (X) + liczba (Y).
+    # Kategorie z ≥3 obserwacjami otrzymują box plot, pozostałe tylko punkty.
+    # Punkty są losowo rozsiane poziomo (jitter) dla czytelności.
+    # Top 15 kategorii według liczebności.
+    # -------------------------------------------------------------------------
     elif chart_type == "Box plot":
         if not has_y:
             raise ValueError("Box plot wymaga kolumny Y.")
@@ -80,6 +127,7 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         top_cats = combined["x"].value_counts().head(15).index
         combined = combined[combined["x"].isin(top_cats)]
 
+        # Podział kategorii: z box plotem (≥3 obs.) i bez (1–2 obs.)
         multi = [cat for cat in top_cats if len(combined[combined["x"] == cat]) >= 3]
         single = [cat for cat in top_cats if len(combined[combined["x"] == cat]) < 3]
         all_cats = list(multi) + list(single)
@@ -87,6 +135,7 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         positions = list(range(len(all_cats)))
         cat_to_pos = {cat: i for i, cat in enumerate(all_cats)}
 
+        # Rysowanie box plotów dla kategorii z wystarczającą liczbą obserwacji
         if multi:
             groups = [combined["y"][combined["x"] == cat].values for cat in multi]
             multi_pos = [cat_to_pos[cat] for cat in multi]
@@ -102,6 +151,7 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
                 flierprops=dict(marker="", markersize=0)
             )
 
+        # Nakładanie punktów z jitterem (seed=42 dla powtarzalności)
         rng = np.random.default_rng(42)
         for cat in all_cats:
             vals = combined["y"][combined["x"] == cat].values
@@ -126,7 +176,11 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         ax.set_xlabel(col_x)
         ax.set_ylabel(col_y)
 
-    # SCATTER PLOT
+    # -------------------------------------------------------------------------
+    # WYKRES: SCATTER PLOT (wykres rozrzutu)
+    # Dla dwóch kolumn numerycznych.
+    # Jeśli liczba punktów przekracza SCATTER_MAX_POINTS — losowe próbkowanie.
+    # -------------------------------------------------------------------------
     elif chart_type == "Wykres rozrzutu":
         if not has_y:
             raise ValueError("Wykres rozrzutu wymaga kolumny Y.")
@@ -136,6 +190,7 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         if combined.empty:
             raise ValueError("Brak danych liczbowych do wykresu rozrzutu.")
 
+        # Próbkowanie przy dużych zbiorach danych
         sampled = False
         if len(combined) > SCATTER_MAX_POINTS:
             combined = combined.sample(n=SCATTER_MAX_POINTS, random_state=42)
@@ -150,7 +205,11 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         ax.set_xlabel(col_x)
         ax.set_ylabel(col_y)
 
-    # WYKRES LINIOWY
+    # -------------------------------------------------------------------------
+    # WYKRES: LINIOWY
+    # Dla kolumny datetime (X) i numerycznej (Y).
+    # Dane sortowane rosnąco po osi czasu przed rysowaniem.
+    # -------------------------------------------------------------------------
     elif chart_type == "Wykres liniowy":
         if not has_y:
             raise ValueError("Wykres liniowy wymaga kolumny Y.")
@@ -170,12 +229,18 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
     else:
         raise ValueError(f"Nieznany typ wykresu: {chart_type}")
 
+    # --- SIATKA ---
     ax.grid(True, linestyle="--", alpha=0.5)
 
+    # -------------------------------------------------------------------------
+    # OGRANICZENIE ZAKRESU OSI Y (opcjonalne)
+    # Jeśli użytkownik podał y_min i y_max, oś Y jest przycinana.
+    # Obliczana jest liczba punktów poza zakresem i wyświetlana jako adnotacja.
+    # -------------------------------------------------------------------------
     if y_min is not None and y_max is not None:
         ax.set_ylim(y_min, y_max)
 
-        # Policz punkty poza zakresem
+        # Liczenie punktów poza zakresem
         try:
             all_y = combined["y"] if "combined" in dir() else x
             out_below = int((all_y < y_min).sum())
@@ -184,6 +249,7 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
         except Exception:
             out_total = out_below = out_above = 0
 
+        # Budowanie tekstu adnotacji
         info = f"Zakres osi Y: {y_min} – {y_max}"
         if out_total > 0:
             info += f"\n{out_total} pkt poza zakresem"
@@ -192,6 +258,7 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
             if out_above > 0:
                 info += f"  (powyżej: {out_above})"
 
+        # Wyświetlanie adnotacji w lewym górnym rogu wykresu
         ax.annotate(
             info,
             xy=(0.01, 0.99), xycoords="axes fraction",
@@ -202,5 +269,6 @@ def create_plot(df, col_x, col_y=None, chart_type="Auto", y_min=None, y_max=None
                       alpha=0.8)
         )
 
+    # --- FINALIZACJA I ZWROT FIGURY ---
     fig.tight_layout()
     return fig, chart_type
