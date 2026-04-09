@@ -70,6 +70,4 @@ pip install pandas matplotlib pyqt5 reportlab openpyxl
 python main.py
 ```
 
-## Autor
-
 Projekt wykonany jako aplikacja egzaminacyjna z analizy danych medycznych.
