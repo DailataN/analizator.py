@@ -33,11 +33,28 @@ Aplikacja desktopowa w Pythonie (PyQt5) do analizy relacyjnych danych medycznych
 
 Baza SQLite zawiera 5 tabel połączonych przez `patient_id`:
 
-- `patients` — dane demograficzne i kliniczne (100 000 pacjentów)
-- `medications` — leki i recepty (364 174 rekordów)
-- `outcomes` — hospitalizacje i wyniki leczenia (11 001 rekordów)
-- `diagnoses` — wizyty z kodami ICD-10 (274 592 rekordów)
-- `lab_results` — wyniki badań laboratoryjnych (2 827 722 rekordów)
+Baza SQLite zawiera 5 tabel połączonych przez `patient_id`:
+
+- `patients` — dane demograficzne i kliniczne (do testu: 100 000 pacjentów)
+  - Klucze: patient_id (Text, not NULL)
+  - Kolumny: medication (TEXT), dose (Real), unit (Text), frequency (Text), indication (Text), start_date (Text), duration_days (Int), is_generic (Int, Def.: 0), adherence_pct (Real)
+                
+- `medications` — leki i recepty (do testu: 364 174 rekordów)
+  - Klucze: id (Int, Autoincrement), *patient_id* (Text, not NULL)
+  - Kolumny: medication (Text), dose (Real), unit (Text), frequency (Text), indication (Text), start_date (Text), duration_days (Int), is_generic (Int, Def.: 0), adherence_pct (Real)
+                
+- `outcomes` — hospitalizacje i wyniki leczenia (do testu: 11 001 rekordów)
+  - Klucze: id (Int), *patient_id* (Text, not NULL) 
+  - Kolumny: admission_date (Text), discharge_date (Text), length_of_stay_days (Int), icu_admission (Int, Def.: 0), icu_days (Int, Def.: 0), in_hospital_death (Int, Def.: 0), discharge_disposition (Text), readmitted_30d (Int, Def.: 0), days_to_readmission (Real), primary_drg (Int), total_charges_usd (Real)
+                
+- `diagnoses` — wizyty z kodami ICD-10 (do testu: 274 592 rekordów)
+  - Klucze: id (Int, Autoincrement), *patient_id* (Text, not NULL)
+  - Kolumny: visit_date (Text), visit_type (Text), primary_diagnosis (Text), primary_icd10 (Text), secondary_diagnoses (Text), secondary_icd10s (Text), provider_specialty (Text), 
+                
+- `lab_results` — wyniki badań laboratoryjnych (do testu: 2 827 722 rekordów)
+  - Klucze: id (Int, Autoincrement), *patient_id* (Text, not NULL)
+  - Kolumny: patient_id (text, not NULL), test_date (Text), test_name (Text), value (Real), unit (Text), reference_low (Real), reference_high (Real), flag (Text), is_abnormal (Int, Def.: 0), delta_from_normal (Real)
+
 
 Aby wygenerować bazę danych z plików CSV:
 ```bash
